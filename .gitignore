@@ -1,0 +1,12 @@
+node_modules/
+logs/
+backups/
+data/
+*.log
+*.csv
+*.xlsx
+config.json
+*.local.json
+.env
+.DS_Store
+Thumbs.db

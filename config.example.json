@@ -1,0 +1,34 @@
+{
+  "baiduAccounts": [
+    {
+      "username": "FILL_BAIDU_ACCOUNT_NAME",
+      "appId": "FILL_BAIDU_APP_ID",
+      "secretKey": "FILL_BAIDU_SECRET_KEY",
+      "authorizationUrl": "FILL_BAIDU_AUTHORIZATION_URL",
+      "authorizationCode": "",
+      "accessToken": "",
+      "refreshToken": "",
+      "tokenExpiresAt": "",
+      "enabled": true
+    }
+  ],
+  "shimo": {
+    "enabled": false,
+    "appId": "",
+    "appSecret": "",
+    "token": "",
+    "tokenUserId": "baidu-report-automation"
+  },
+  "qihoo360": {
+    "enabled": false,
+    "accounts": [
+      {
+        "username": "FILL_QIHOO_ACCOUNT_NAME",
+        "passwordPlain": "",
+        "passwordEncrypted": "",
+        "apiKey": "FILL_QIHOO_API_KEY",
+        "apiSecret": "FILL_QIHOO_API_SECRET"
+      }
+    ]
+  }
+}
