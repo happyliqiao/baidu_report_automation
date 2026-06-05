@@ -22,13 +22,13 @@ const BALANCE_AMOUNT_HEADERS = ['\u4ea7\u51fa\u91d1\u989d'];
 const DEFAULT_BALANCE_RECONCILE_FILE = path.join(
   os.homedir(),
   'Desktop',
-  '\u4f59\u989d\u5bf9\u8d26\u5bfc\u51fa\u5217\u8868.xlsx'
+  '\u4e00\u952e\u51fa\u7a3f\u8bb0\u5f55\u5bfc\u51fa\u5217\u8868.xlsx'
 );
 
 const BALANCE_FIELD_HEADERS = {
-  date: ['\u6d88\u8017\u65f6\u95f4', '\u652f\u4ed8\u65f6\u95f4', '\u65f6\u95f4', '\u65e5\u671f', 'date'],
+  date: ['\u521b\u5efa\u65f6\u95f4', '\u6d88\u8017\u65f6\u95f4', '\u652f\u4ed8\u65f6\u95f4', '\u65f6\u95f4', '\u65e5\u671f', 'date'],
   account: ['\u5b9d\u8d1d\u540d\u79f0', '\u8d26\u6237', '\u8d26\u53f7', 'account'],
-  amount: ['\u5b9e\u9645\u652f\u4ed8\u91d1\u989d', '\u652f\u4ed8\u91d1\u989d', '\u91d1\u989d', 'amount'],
+  amount: ['\u91d1\u989d', '\u5b9e\u9645\u652f\u4ed8\u91d1\u989d', '\u652f\u4ed8\u91d1\u989d', 'amount'],
 };
 
 const FIELD_HEADERS = new Map([
