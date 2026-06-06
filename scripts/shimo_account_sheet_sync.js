@@ -1043,6 +1043,18 @@ async function duplicateRowBelow(page, options, cursor, previousRow) {
   return targetSheetRow;
 }
 
+async function waitForInsertedRow(page, options, sourceRow, timeoutMs = 15000) {
+  const started = Date.now();
+  let parsed = null;
+  while (Date.now() - started < timeoutMs) {
+    parsed = await reparseCurrentSheet(page, options);
+    const existing = findExisting(parsed, sourceRow);
+    if (existing) return { parsed, row: existing };
+    await page.waitForTimeout(1000);
+  }
+  return { parsed, row: null };
+}
+
 async function pasteValueAtCell(page, options, cursor, row, column, value) {
   await moveToCell(page, options, cursor, row, column);
   if (value === null) {
@@ -1234,11 +1246,15 @@ async function syncSheet(page, sync, sheetName, rows, dryRun) {
       continue;
     }
 
-    const targetRow = templateRow.sheetRow + 1;
     console.log(`${sheetName}: insert ${sourceRow.account} ${sourceRow.date} using template row ${templateRow.sheetRow} (${templateRow.standard.account} ${templateRow.standard.date})`);
-    await duplicateRowBelow(page, sync, cursor, templateRow);
+    const targetRow = await duplicateRowBelow(page, sync, cursor, templateRow);
     await updateMappedFields(page, sync, parsed, cursor, targetRow, sourceRow);
-    rememberInsertedRow(parsed, templateRow, sourceRow);
+    const verifiedInsert = await waitForInsertedRow(page, sync, sourceRow, Number(sync.insertVerifyTimeoutMs || 15000));
+    if (!verifiedInsert.row) {
+      console.log(`${sheetName}: verify account rows ${sourceRow.account}: ${describeAccountRows(verifiedInsert.parsed || parsed, sourceRow.account)}`);
+      throw new Error(`${sheetName}: inserted row not found after update: ${sourceRow.account} ${sourceRow.date}`);
+    }
+    parsed = verifiedInsert.parsed;
     insertedRows.push(sourceRow);
     inserted += 1;
   }
