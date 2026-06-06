@@ -28,7 +28,7 @@ const DEFAULT_BALANCE_RECONCILE_FILE = path.join(
 const BALANCE_FIELD_HEADERS = {
   date: ['\u521b\u5efa\u65f6\u95f4', '\u6d88\u8017\u65f6\u95f4', '\u652f\u4ed8\u65f6\u95f4', '\u65f6\u95f4', '\u65e5\u671f', 'date'],
   account: ['\u5b9d\u8d1d\u540d\u79f0', '\u8d26\u6237', '\u8d26\u53f7', 'account'],
-  amount: ['\u91d1\u989d', '\u5b9e\u9645\u652f\u4ed8\u91d1\u989d', '\u652f\u4ed8\u91d1\u989d', 'amount'],
+  amount: ['\u5b9e\u9645\u652f\u4ed8\u91d1\u989d', '\u91d1\u989d', '\u652f\u4ed8\u91d1\u989d', 'amount'],
 };
 
 const FIELD_HEADERS = new Map([
@@ -175,6 +175,15 @@ function headerIndex(cells, names) {
   return cells.findIndex((cell) => wanted.has(normalizeHeader(cell)));
 }
 
+function preferredHeaderIndex(cells, names) {
+  for (const name of names) {
+    const wanted = normalizeHeader(name);
+    const index = cells.findIndex((cell) => normalizeHeader(cell) === wanted);
+    if (index >= 0) return index;
+  }
+  return -1;
+}
+
 function parseNumber(value) {
   const text = normalize(value).replace(/,/g, '');
   if (!text) return 0;
@@ -192,9 +201,9 @@ function findBalanceHeaderRow(rows) {
   for (let index = 0; index < rows.length; index++) {
     const cells = rows[index];
     if (
-      headerIndex(cells, BALANCE_FIELD_HEADERS.date) >= 0 &&
-      headerIndex(cells, BALANCE_FIELD_HEADERS.account) >= 0 &&
-      headerIndex(cells, BALANCE_FIELD_HEADERS.amount) >= 0
+      preferredHeaderIndex(cells, BALANCE_FIELD_HEADERS.date) >= 0 &&
+      preferredHeaderIndex(cells, BALANCE_FIELD_HEADERS.account) >= 0 &&
+      preferredHeaderIndex(cells, BALANCE_FIELD_HEADERS.amount) >= 0
     ) {
       return index;
     }
@@ -225,9 +234,9 @@ function loadBalanceReconcile(config, baseDir) {
   }
 
   const headers = rows[headerRow];
-  const dateIndex = headerIndex(headers, BALANCE_FIELD_HEADERS.date);
-  const accountIndex = headerIndex(headers, BALANCE_FIELD_HEADERS.account);
-  const amountIndex = headerIndex(headers, BALANCE_FIELD_HEADERS.amount);
+  const dateIndex = preferredHeaderIndex(headers, BALANCE_FIELD_HEADERS.date);
+  const accountIndex = preferredHeaderIndex(headers, BALANCE_FIELD_HEADERS.account);
+  const amountIndex = preferredHeaderIndex(headers, BALANCE_FIELD_HEADERS.amount);
   const byKey = new Map();
 
   for (const cells of rows.slice(headerRow + 1)) {

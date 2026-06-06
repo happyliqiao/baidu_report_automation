@@ -183,12 +183,28 @@ function Invoke-ReportScriptForDateRange {
 }
 
 function Invoke-BaiduTokenRefresh {
-    param([string]$ScriptPath, [string]$ConfigPath)
+    param(
+        [string]$ScriptPath,
+        [string]$ConfigPath,
+        [string]$AccountUsername = ''
+    )
 
     if (-not (Test-Path $ScriptPath)) {
         throw ('Refresh script not found: ' + $ScriptPath)
     }
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ScriptPath -ConfigPath $ConfigPath -UpdateConfig -SkipMissingRefreshToken | Out-Null
+    $args = @(
+        '-NoProfile',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', $ScriptPath,
+        '-ConfigPath', $ConfigPath,
+        '-UpdateConfig',
+        '-SkipMissingRefreshToken',
+        '-FailOnAccountError'
+    )
+    if (-not [string]::IsNullOrWhiteSpace($AccountUsername)) {
+        $args += @('-AccountUsername', $AccountUsername)
+    }
+    powershell.exe @args
     if ($LASTEXITCODE -ne 0) {
         throw 'Token refresh failed.'
     }
@@ -360,7 +376,15 @@ if ($UseShimoMissingDates) {
 
     $needsBaidu = @($runKeys.Values | Where-Object { $_.Source -eq 'baidu' }).Count -gt 0
     if ($needsBaidu) {
-        Invoke-BaiduTokenRefresh -ScriptPath $refreshScript -ConfigPath $shimoConfigPath
+        $baiduRefreshAccounts = @(
+            $runKeys.Values |
+                Where-Object { $_.Source -eq 'baidu' } |
+                ForEach-Object { [string]$_.Account } |
+                Sort-Object -Unique
+        )
+        foreach ($account in $baiduRefreshAccounts) {
+            Invoke-BaiduTokenRefresh -ScriptPath $refreshScript -ConfigPath $shimoConfigPath -AccountUsername $account
+        }
     }
 
     $baiduRuns = @($runKeys.Values | Where-Object { $_.Source -eq 'baidu' })

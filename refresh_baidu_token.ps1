@@ -6,7 +6,8 @@ param(
     [switch]$Interactive,
     [switch]$PrintAuthUrl,
     [switch]$UpdateConfig,
-    [switch]$SkipMissingRefreshToken
+    [switch]$SkipMissingRefreshToken,
+    [switch]$FailOnAccountError
 )
 
 $ErrorActionPreference = 'Stop'
@@ -70,6 +71,24 @@ function Get-QueryString {
     $pairs -join '&'
 }
 
+function Set-AuthUrlRedirectUri {
+    param(
+        [string]$AuthUrl,
+        [string]$RedirectUri
+    )
+
+    if ([string]::IsNullOrWhiteSpace($AuthUrl) -or [string]::IsNullOrWhiteSpace($RedirectUri)) {
+        return $AuthUrl
+    }
+
+    $encodedRedirectUri = [uri]::EscapeDataString($RedirectUri)
+    [regex]::Replace(
+        $AuthUrl,
+        '([?&](?:callback|redirect_uri)=)([^&]*)',
+        { param($match) $match.Groups[1].Value + $encodedRedirectUri }
+    )
+}
+
 function Get-AuthUrl {
     param(
         $Account,
@@ -78,12 +97,14 @@ function Get-AuthUrl {
     )
 
     if ($Account.PSObject.Properties.Name -contains 'authorizationUrl' -and
-        -not [string]::IsNullOrWhiteSpace([string]$Account.authorizationUrl)) {
-        return [string]$Account.authorizationUrl
+        -not [string]::IsNullOrWhiteSpace([string]$Account.authorizationUrl) -and
+        [string]$Account.authorizationUrl -notlike 'FILL_*') {
+        return Set-AuthUrlRedirectUri -AuthUrl ([string]$Account.authorizationUrl) -RedirectUri $RedirectUri
     }
     if ($Account.PSObject.Properties.Name -contains 'authUrl' -and
-        -not [string]::IsNullOrWhiteSpace([string]$Account.authUrl)) {
-        return [string]$Account.authUrl
+        -not [string]::IsNullOrWhiteSpace([string]$Account.authUrl) -and
+        [string]$Account.authUrl -notlike 'FILL_*') {
+        return Set-AuthUrlRedirectUri -AuthUrl ([string]$Account.authUrl) -RedirectUri $RedirectUri
     }
 
     'https://openapi.baidu.com/oauth/2.0/authorize?response_type=code&client_id={0}&redirect_uri={1}&scope=basic&display=popup' -f [uri]::EscapeDataString($ClientId), [uri]::EscapeDataString($RedirectUri)
@@ -232,6 +253,8 @@ if ($PrintAuthUrl) {
     return
 }
 
+$accountErrors = @()
+
 foreach ($account in $accounts) {
     try {
         Assert-OAuthFields -Account $account
@@ -307,7 +330,9 @@ foreach ($account in $accounts) {
                 userId = if ([string]::IsNullOrWhiteSpace([string]$account.userId)) { $null } else { [long]$account.userId }
             }
         } elseif ($SkipMissingRefreshToken) {
-            Write-Host ('Skip account without refreshToken: ' + $account.username)
+            $message = 'Skip account without refreshToken: ' + $account.username
+            Write-Host $message
+            $accountErrors += $message
             continue
         } else {
             throw ('Account ' + $account.username + ' has no refreshToken. Run with -PrintAuthUrl first, authorize in browser, then rerun with -Code CODE, or use -SkipMissingRefreshToken.')
@@ -346,7 +371,9 @@ foreach ($account in $accounts) {
 
         Write-Host ('Refreshed accessToken for account: ' + $account.username)
     } catch {
-        Write-Warning ($_.Exception.Message)
+        $message = 'Account ' + $account.username + ' token refresh failed: ' + $_.Exception.Message
+        $accountErrors += $message
+        Write-Warning $message
     }
 }
 
@@ -355,4 +382,8 @@ if ($UpdateConfig) {
     Write-Host ('Updated config: ' + $ConfigPath)
 } else {
     Write-Host 'Dry run only. Add -UpdateConfig to save token fields into config.json.'
+}
+
+if ($FailOnAccountError -and $accountErrors.Count -gt 0) {
+    throw ('Token refresh had account errors: ' + ($accountErrors -join '; '))
 }

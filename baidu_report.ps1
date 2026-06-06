@@ -622,6 +622,7 @@ if ($accounts.Count -eq 0) {
 
 $reportDates = @(Get-ReportDateList -Date $Date -StartDate $StartDate -EndDate $EndDate -Days $Days)
 $rows = @()
+$failedAccounts = @()
 
 foreach ($reportDate in $reportDates) {
     foreach ($account in $accounts) {
@@ -638,7 +639,9 @@ foreach ($reportDate in $reportDates) {
                 Write-Log ('Baidu rows for account ' + $account.username + ' date ' + $reportDate + ': ' + $accountRows.Count)
             }
         } catch {
-            Write-Log ('Baidu account failed: ' + $account.username + '; date: ' + $reportDate + '; ' + $_.Exception.Message)
+            $failureMessage = 'Baidu account failed: ' + $account.username + '; date: ' + $reportDate + '; ' + $_.Exception.Message
+            $failedAccounts += $failureMessage
+            Write-Log $failureMessage
         }
     }
 }
@@ -651,4 +654,7 @@ if ($config.PSObject.Properties.Name -contains 'outputCsvs' -and
     $outputCsv = [string]$config.outputCsvs.baidu
 }
 Save-ReportRows -Rows $rows -OutputCsv $outputCsv
+if ($failedAccounts.Count -gt 0) {
+    throw ('Baidu report had account failures: ' + ($failedAccounts -join ' | '))
+}
 Write-Log 'Done.'
