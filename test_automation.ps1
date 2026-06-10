@@ -35,10 +35,13 @@ $requiredPaths = @(
     'package.json',
     'package-lock.json',
     'run_daily_report.ps1',
+    'configure_daily_schedule.ps1',
     'baidu_report.ps1',
     'ad_report.ps1',
     'refresh_baidu_token.ps1',
     'sync_shimo_account_sheets.ps1',
+    'run_scheduled_full_report.ps1',
+    'run_scheduled_test_report.ps1',
     'scripts\shimo_account_sheet_sync.js',
     'node_modules\playwright-core',
     'backups\baidu_report_automation_versions_merged'
@@ -69,10 +72,13 @@ if (-not $package.dependencies -or -not $package.dependencies.'playwright-core')
 Write-Step 'Check PowerShell syntax.'
 $psScripts = @(
     'run_daily_report.ps1',
+    'configure_daily_schedule.ps1',
     'baidu_report.ps1',
     'ad_report.ps1',
     'refresh_baidu_token.ps1',
-    'sync_shimo_account_sheets.ps1'
+    'sync_shimo_account_sheets.ps1',
+    'run_scheduled_full_report.ps1',
+    'run_scheduled_test_report.ps1'
 )
 foreach ($script in $psScripts) {
     Test-PowerShellSyntax (Join-Path $root $script)
