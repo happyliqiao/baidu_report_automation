@@ -43,8 +43,7 @@ $requiredPaths = @(
     'run_scheduled_full_report.ps1',
     'run_scheduled_test_report.ps1',
     'scripts\shimo_account_sheet_sync.js',
-    'node_modules\playwright-core',
-    'backups\baidu_report_automation_versions_merged'
+    'node_modules\playwright-core'
 )
 foreach ($relativePath in $requiredPaths) {
     Assert-PathExists (Join-Path $root $relativePath)
@@ -82,6 +81,19 @@ $psScripts = @(
 )
 foreach ($script in $psScripts) {
     Test-PowerShellSyntax (Join-Path $root $script)
+}
+
+Write-Step 'Validate run_daily_report fallback when Shimo sync is disabled.'
+$runDailyScript = Join-Path $root 'run_daily_report.ps1'
+$runDailyContent = Get-Content -LiteralPath $runDailyScript -Raw -Encoding UTF8
+if ($runDailyContent -notmatch 'Fall back to direct date-based report fetch') {
+    throw 'run_daily_report.ps1 missing fallback for disabled Shimo sync.'
+}
+if ($runDailyContent -notmatch 'Set-DefaultDirectReportDate') {
+    throw 'run_daily_report.ps1 missing direct-report default date helper.'
+}
+if ($runDailyContent -notmatch 'No refreshable Baidu account found in config\.json') {
+    throw 'run_daily_report.ps1 missing Baidu token refresh fallback.'
 }
 
 Write-Step 'Check Node script syntax.'

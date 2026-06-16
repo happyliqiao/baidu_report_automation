@@ -15,7 +15,20 @@ function Write-Log {
     $logDir = Join-Path $PSScriptRoot 'logs'
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
     $line = '{0} {1}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $Message
-    Add-Content -Path (Join-Path $logDir '360_report.log') -Value $line -Encoding UTF8
+    $logPath = Join-Path $logDir '360_report.log'
+    $written = $false
+    for ($attempt = 1; $attempt -le 5 -and -not $written; $attempt++) {
+        try {
+            Add-Content -Path $logPath -Value $line -Encoding UTF8
+            $written = $true
+        } catch {
+            Start-Sleep -Milliseconds (200 * $attempt)
+        }
+    }
+    if (-not $written) {
+        $fallbackPath = Join-Path $logDir ('360_report_' + $PID + '.log')
+        Add-Content -Path $fallbackPath -Value $line -Encoding UTF8
+    }
     Write-Host $line
 }
 
@@ -107,22 +120,35 @@ function Invoke-FormPost {
     param(
         [string]$Uri,
         [hashtable]$Headers,
-        [hashtable]$Body
+        [hashtable]$Body,
+        [int]$MaxAttempts = 4,
+        [int]$InitialDelaySeconds = 2
     )
+
     $form = ConvertTo-FormBody $Body
-    try {
-        Invoke-RestMethod -Uri $Uri -Method Post -Headers $Headers -Body $form -ContentType 'application/x-www-form-urlencoded'
-    } catch {
-        $detail = $_.Exception.Message
-        if ($_.Exception.Response) {
-            try {
-                $reader = New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())
-                $detail = $detail + ' Response: ' + $reader.ReadToEnd()
-            } catch {
-                $detail = $detail + ' Response body could not be read.'
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            return Invoke-RestMethod -Uri $Uri -Method Post -Headers $Headers -Body $form -ContentType 'application/x-www-form-urlencoded' -TimeoutSec 60
+        } catch {
+            $detail = $_.Exception.Message
+            if ($_.Exception.Response) {
+                try {
+                    $reader = New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())
+                    $detail = $detail + ' Response: ' + $reader.ReadToEnd()
+                } catch {
+                    $detail = $detail + ' Response body could not be read.'
+                }
             }
+
+            if ($attempt -ge $MaxAttempts) {
+                throw $detail
+            }
+
+            $delay = [math]::Min(30, $InitialDelaySeconds * [math]::Pow(2, $attempt - 1))
+            Write-Log ('POST retry {0}/{1} in {2}s: {3}; {4}' -f ($attempt + 1), $MaxAttempts, $delay, $Uri, $detail)
+            Start-Sleep -Seconds $delay
         }
-        throw $detail
     }
 }
 

@@ -19,6 +19,9 @@ const ZERO_AFTER_COPY_HEADERS = [];
 const CLEAR_AFTER_COPY_HEADERS = [];
 const BALANCE_ORDER_HEADERS = ['\u8ba2\u5355'];
 const BALANCE_AMOUNT_HEADERS = ['\u4ea7\u51fa\u91d1\u989d'];
+const REBATE_HEADERS = ['\u8fd4\u70b9'];
+const FINANCE_COST_HEADERS = ['\u8d22\u52a1\u6d88\u8017'];
+const PROFIT_HEADERS = ['\u5229\u6da6'];
 const DEFAULT_BALANCE_RECONCILE_FILE = path.join(
   os.homedir(),
   'Desktop',
@@ -510,14 +513,24 @@ function parseSheetText(text) {
     return parsed;
   }
 
-  const headers = lines[0].split('\t').map((header) => normalize(header));
+  let headerLineIndex = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const candidateHeaders = lines[i].split('\t').map((header) => normalize(header));
+    const candidateFields = buildHeaderFields(candidateHeaders);
+    if (REQUIRED_FIELDS.every((field) => candidateFields.has(field))) {
+      headerLineIndex = i;
+      break;
+    }
+  }
+
+  const headers = lines[headerLineIndex].split('\t').map((header) => normalize(header));
   const headerFields = buildHeaderFields(headers);
   const rows = [];
-  for (let i = 1; i < lines.length; i++) {
+  for (let i = headerLineIndex + 1; i < lines.length; i++) {
     const cells = lines[i].split('\t');
     rows.push({
       cells,
-      sheetRow: i + 1,
+      sheetRow: i - headerLineIndex + 1,
       standard: standardFromCells(headers, cells),
     });
   }
@@ -527,6 +540,9 @@ function parseSheetText(text) {
     zeroColumns: buildColumnsByHeaders(headers, ZERO_AFTER_COPY_HEADERS),
     balanceOrderColumns: buildColumnsByHeaders(headers, BALANCE_ORDER_HEADERS),
     balanceAmountColumns: buildColumnsByHeaders(headers, BALANCE_AMOUNT_HEADERS),
+    rebateColumns: buildColumnsByHeaders(headers, REBATE_HEADERS),
+    financeCostColumns: buildColumnsByHeaders(headers, FINANCE_COST_HEADERS),
+    profitColumns: buildColumnsByHeaders(headers, PROFIT_HEADERS),
     clearColumns: buildColumnsByHeaders(headers, CLEAR_AFTER_COPY_HEADERS),
     rows,
     rawLineCount: lines.length,
@@ -641,6 +657,25 @@ function describeAccountRows(parsed, account, limit = 12) {
 
 function rememberInsertedRow(parsed, previousRow, sourceRow) {
   const insertAtSheetRow = previousRow.sheetRow + 1;
+  const clonedCells = buildInsertedCells(parsed, previousRow, sourceRow, insertAtSheetRow);
+  const inserted = {
+    cells: clonedCells,
+    sheetRow: insertAtSheetRow,
+    standard: sourceToCanonical(sourceRow),
+  };
+
+  for (const row of parsed.rows) {
+    if (row.sheetRow >= insertAtSheetRow) row.sheetRow += 1;
+  }
+
+  const previousIndex = parsed.rows.indexOf(previousRow);
+  parsed.rows.splice(previousIndex + 1, 0, inserted);
+  parsed.rawLineCount += 1;
+  rebuildIndexes(parsed);
+  return inserted;
+}
+
+function buildInsertedCells(parsed, previousRow, sourceRow, sheetRow) {
   const clonedCells = [...previousRow.cells];
   for (const field of REQUIRED_FIELDS) {
     const column = parsed.headerFields.get(field);
@@ -659,21 +694,33 @@ function rememberInsertedRow(parsed, previousRow, sourceRow) {
   for (const column of parsed.clearColumns || []) {
     clonedCells[column - 1] = '';
   }
-  const inserted = {
-    cells: clonedCells,
-    sheetRow: insertAtSheetRow,
-    standard: sourceToCanonical(sourceRow),
-  };
+  applyFinanceCostFormulas(parsed, clonedCells, sheetRow);
+  applyProfitFormulas(parsed, clonedCells, sheetRow);
+  return clonedCells;
+}
 
-  for (const row of parsed.rows) {
-    if (row.sheetRow >= insertAtSheetRow) row.sheetRow += 1;
+function applyFinanceCostFormulas(parsed, cells, sheetRow) {
+  const bookCostColumn = parsed.headerFields.get('cost');
+  const rebateColumn = (parsed.rebateColumns || [])[0];
+  if (!bookCostColumn || !rebateColumn || !sheetRow) return;
+
+  const bookCostRef = columnName(bookCostColumn);
+  const rebateRef = columnName(rebateColumn);
+  for (const column of parsed.financeCostColumns || []) {
+    cells[column - 1] = `=${bookCostRef}${sheetRow}/${rebateRef}${sheetRow}`;
   }
+}
 
-  const previousIndex = parsed.rows.indexOf(previousRow);
-  parsed.rows.splice(previousIndex + 1, 0, inserted);
-  parsed.rawLineCount += 1;
-  rebuildIndexes(parsed);
-  return inserted;
+function applyProfitFormulas(parsed, cells, sheetRow) {
+  const outputColumn = (parsed.balanceAmountColumns || [])[0];
+  const financeCostColumn = (parsed.financeCostColumns || [])[0];
+  if (!outputColumn || !financeCostColumn || !sheetRow) return;
+
+  const outputRef = columnName(outputColumn);
+  const financeCostRef = columnName(financeCostColumn);
+  for (const column of parsed.profitColumns || []) {
+    cells[column - 1] = `=${outputRef}${sheetRow}-${financeCostRef}${sheetRow}`;
+  }
 }
 
 function buildSheetRows(config, allRows) {
@@ -1007,7 +1054,7 @@ function previewCopiedRow(text) {
 async function duplicateRowBelow(page, options, cursor, previousRow) {
   const previousSheetRow = previousRow.sheetRow;
   const candidateRows = [previousSheetRow];
-  for (let offset = 1; offset <= Number(options.templateRowSearchWindow || 12); offset++) {
+  for (let offset = 1; offset <= Number(options.templateRowSearchWindow || 80); offset++) {
     candidateRows.push(previousSheetRow + offset);
     if (previousSheetRow - offset > 1) candidateRows.push(previousSheetRow - offset);
   }
@@ -1040,7 +1087,17 @@ async function duplicateRowBelow(page, options, cursor, previousRow) {
   await selectWholeRow(page, options, cursor, targetSheetRow);
   await page.keyboard.press('Control+V');
   await page.waitForTimeout(Number(options.waitAfterPasteSeconds || 4) * 1000);
+  cursor.row = null;
+  cursor.column = null;
   return targetSheetRow;
+}
+
+async function pasteFullRow(page, options, cursor, row, cells) {
+  console.log(`Paste full row at sheet row ${row}`);
+  await moveToCell(page, options, cursor, row, 1);
+  await writeClipboard(page, cells.map((cell) => String(cell ?? '')).join('\t'));
+  await page.keyboard.press('Control+V');
+  await page.waitForTimeout(Number(options.waitAfterPasteSeconds || 4) * 1000);
 }
 
 async function waitForInsertedRow(page, options, sourceRow, timeoutMs = 15000) {
@@ -1248,7 +1305,7 @@ async function syncSheet(page, sync, sheetName, rows, dryRun) {
 
     console.log(`${sheetName}: insert ${sourceRow.account} ${sourceRow.date} using template row ${templateRow.sheetRow} (${templateRow.standard.account} ${templateRow.standard.date})`);
     const targetRow = await duplicateRowBelow(page, sync, cursor, templateRow);
-    await updateMappedFields(page, sync, parsed, cursor, targetRow, sourceRow);
+    await pasteFullRow(page, sync, cursor, targetRow, buildInsertedCells(parsed, templateRow, sourceRow, targetRow));
     const verifiedInsert = await waitForInsertedRow(page, sync, sourceRow, Number(sync.insertVerifyTimeoutMs || 15000));
     if (!verifiedInsert.row) {
       console.log(`${sheetName}: verify account rows ${sourceRow.account}: ${describeAccountRows(verifiedInsert.parsed || parsed, sourceRow.account)}`);
@@ -1342,25 +1399,27 @@ async function main() {
     await page.waitForTimeout(Number(sync.waitAfterOpenSeconds || 8) * 1000);
   }
 
-  if (scanMissing) {
-    const targetDates = buildTargetDates();
-    const plan = await scanMissingDates(page, sync, targetDates);
-    const outputJson = getArg('output-json', '');
-    if (outputJson) {
-      fs.mkdirSync(path.dirname(outputJson), { recursive: true });
-      fs.writeFileSync(outputJson, JSON.stringify(plan, null, 2), 'utf8');
-      console.log(`Wrote missing plan: ${outputJson}`);
+  try {
+    if (scanMissing) {
+      const targetDates = buildTargetDates();
+      const plan = await scanMissingDates(page, sync, targetDates);
+      const outputJson = getArg('output-json', '');
+      if (outputJson) {
+        fs.mkdirSync(path.dirname(outputJson), { recursive: true });
+        fs.writeFileSync(outputJson, JSON.stringify(plan, null, 2), 'utf8');
+        console.log(`Wrote missing plan: ${outputJson}`);
+      } else {
+        console.log(JSON.stringify(plan, null, 2));
+      }
     } else {
-      console.log(JSON.stringify(plan, null, 2));
+      for (const [sheetName, rows] of sheetRows.entries()) {
+        await syncSheet(page, sync, sheetName, rows, dryRun);
+      }
     }
-  } else {
-    for (const [sheetName, rows] of sheetRows.entries()) {
-      await syncSheet(page, sync, sheetName, rows, dryRun);
+  } finally {
+    if (!setup) {
+      await context.close().catch(() => {});
     }
-  }
-
-  if (sync.closeAfterSync) {
-    await context.close();
   }
 }
 

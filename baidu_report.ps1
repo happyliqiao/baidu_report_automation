@@ -16,7 +16,20 @@ function Write-Log {
     $logDir = Join-Path $PSScriptRoot 'logs'
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
     $line = '{0} {1}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $Message
-    Add-Content -Path (Join-Path $logDir 'baidu_report.log') -Value $line -Encoding UTF8
+    $logPath = Join-Path $logDir 'baidu_report.log'
+    $written = $false
+    for ($attempt = 1; $attempt -le 5 -and -not $written; $attempt++) {
+        try {
+            Add-Content -Path $logPath -Value $line -Encoding UTF8
+            $written = $true
+        } catch {
+            Start-Sleep -Milliseconds (200 * $attempt)
+        }
+    }
+    if (-not $written) {
+        $fallbackPath = Join-Path $logDir ('baidu_report_' + $PID + '.log')
+        Add-Content -Path $fallbackPath -Value $line -Encoding UTF8
+    }
     Write-Host $line
 }
 
