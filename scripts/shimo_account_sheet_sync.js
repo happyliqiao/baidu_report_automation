@@ -13,7 +13,7 @@ const REQUIRED_FIELDS = [
   'cost',
   'conversions',
 ];
-const COPIED_TEMPLATE_FIELDS = new Set(['platform', 'account']);
+const COPIED_TEMPLATE_FIELDS = new Set(['platform']);
 
 const ZERO_AFTER_COPY_HEADERS = [];
 const CLEAR_AFTER_COPY_HEADERS = [];
@@ -623,6 +623,14 @@ function getAccountRows(parsed, account) {
   return [];
 }
 
+function describeKnownAccounts(parsed, limit = 20) {
+  if (!parsed.byAccount || parsed.byAccount.size === 0) return 'none';
+  return [...parsed.byAccount.keys()]
+    .filter(Boolean)
+    .slice(0, limit)
+    .join(' | ');
+}
+
 function assertRequiredHeaders(parsed, sheetName) {
   const missing = REQUIRED_FIELDS.filter((field) => !parsed.headerFields.has(field));
   if (missing.length > 0) {
@@ -672,6 +680,32 @@ function findInsertTemplateRow(parsed, sourceRow) {
   let next = null;
   for (const row of accountRows) {
     const rowTime = dateTime(row.standard.date);
+    if (rowTime === null) continue;
+    if (rowTime <= targetTime && (!previous || rowTime > previous.time)) {
+      previous = { row, time: rowTime };
+    }
+    if (rowTime > targetTime && (!next || rowTime < next.time)) {
+      next = { row, time: rowTime };
+    }
+  }
+
+  if (previous) return previous.row;
+  if (next) return next.row;
+  return findSheetLevelTemplateRow(parsed, sourceRow);
+}
+
+function findSheetLevelTemplateRow(parsed, sourceRow) {
+  const targetTime = dateTime(sourceRow.date);
+  if (targetTime === null) return null;
+
+  let previous = null;
+  let next = null;
+  for (const row of parsed.rows || []) {
+    const account = normalizeAccount(row.standard.account);
+    const date = normalizeDate(row.standard.date);
+    if (!account || !date) continue;
+
+    const rowTime = dateTime(date);
     if (rowTime === null) continue;
     if (rowTime <= targetTime && (!previous || rowTime > previous.time)) {
       previous = { row, time: rowTime };
@@ -930,6 +964,7 @@ async function scanMissingDates(page, sync, targetDates) {
           reason: 'account_not_found_in_column_c',
         });
         console.log(`${sheetName}: account not found in column C: ${normalizedAccount}`);
+        console.log(`${sheetName}: known accounts: ${describeKnownAccounts(parsed)}`);
         continue;
       }
 
