@@ -718,7 +718,7 @@ function applyFinanceCostFormulas(parsed, cells, sheetRow) {
   const bookCostRef = columnName(bookCostColumn);
   const rebateRef = columnName(rebateColumn);
   for (const column of parsed.financeCostColumns || []) {
-    cells[column - 1] = `=${bookCostRef}${sheetRow}/${rebateRef}${sheetRow}`;
+    cells[column - 1] = `=ROUNDDOWN(${bookCostRef}${sheetRow}/${rebateRef}${sheetRow},0)`;
   }
 }
 
@@ -730,7 +730,7 @@ function applyProfitFormulas(parsed, cells, sheetRow) {
   const outputRef = columnName(outputColumn);
   const financeCostRef = columnName(financeCostColumn);
   for (const column of parsed.profitColumns || []) {
-    cells[column - 1] = `=${outputRef}${sheetRow}-${financeCostRef}${sheetRow}`;
+    cells[column - 1] = `=ROUNDDOWN(${outputRef}${sheetRow}-${financeCostRef}${sheetRow},0)`;
   }
 }
 
@@ -742,7 +742,7 @@ function applyRoiFormulas(parsed, cells, sheetRow) {
   const profitRef = columnName(profitColumn);
   const outputRef = columnName(outputColumn);
   for (const column of parsed.roiColumns || []) {
-    cells[column - 1] = `=${profitRef}${sheetRow}/${outputRef}${sheetRow}`;
+    cells[column - 1] = `=IFERROR(${profitRef}${sheetRow}/${outputRef}${sheetRow},0)`;
   }
 }
 
@@ -1226,13 +1226,59 @@ function buildBalanceFieldActions(parsed, sourceRow) {
 
 async function updateBalanceFields(page, options, parsed, cursor, row, sourceRow) {
   const actions = buildBalanceFieldActions(parsed, sourceRow);
-  if (actions.length === 0) return false;
+  const formulaActions = buildFormulaFieldActions(parsed, row);
+  if (actions.length === 0 && formulaActions.length === 0) return false;
   await page.keyboard.press('Escape');
   await page.waitForTimeout(120);
   for (const action of actions) {
     await pasteValueAtCell(page, options, cursor, row, action.column, action.value);
   }
+  for (const action of formulaActions) {
+    await pasteValueAtCell(page, options, cursor, row, action.column, action.value);
+  }
   return true;
+}
+
+function buildFormulaFieldActions(parsed, row) {
+  const cells = [];
+  const financeCostFormula = buildFormulaCellValue(parsed, row, 'financeCost');
+  for (const column of parsed.financeCostColumns || []) {
+    if (financeCostFormula) cells.push({ column, value: financeCostFormula });
+  }
+
+  const profitFormula = buildFormulaCellValue(parsed, row, 'profit');
+  for (const column of parsed.profitColumns || []) {
+    if (profitFormula) cells.push({ column, value: profitFormula });
+  }
+
+  const roiFormula = buildFormulaCellValue(parsed, row, 'roi');
+  for (const column of parsed.roiColumns || []) {
+    if (roiFormula) cells.push({ column, value: roiFormula });
+  }
+
+  return cells.sort((a, b) => a.column - b.column);
+}
+
+function buildFormulaCellValue(parsed, row, kind) {
+  const bookCostColumn = parsed.headerFields.get('cost');
+  const rebateColumn = (parsed.rebateColumns || [])[0];
+  const outputColumn = (parsed.balanceAmountColumns || [])[0];
+  const financeCostColumn = (parsed.financeCostColumns || [])[0];
+  const profitColumn = (parsed.profitColumns || [])[0];
+
+  if (kind === 'financeCost') {
+    if (!bookCostColumn || !rebateColumn) return '';
+    return `=ROUNDDOWN(${columnName(bookCostColumn)}${row}/${columnName(rebateColumn)}${row},0)`;
+  }
+  if (kind === 'profit') {
+    if (!outputColumn || !financeCostColumn) return '';
+    return `=ROUNDDOWN(${columnName(outputColumn)}${row}-${columnName(financeCostColumn)}${row},0)`;
+  }
+  if (kind === 'roi') {
+    if (!profitColumn || !outputColumn) return '';
+    return `=IFERROR(${columnName(profitColumn)}${row}/${columnName(outputColumn)}${row},0)`;
+  }
+  return '';
 }
 
 async function updateMappedFieldsAtCurrentRow(page, options, parsed, sourceRow) {
