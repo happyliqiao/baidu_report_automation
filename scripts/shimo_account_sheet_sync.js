@@ -1115,14 +1115,6 @@ async function duplicateRowBelow(page, options, cursor, previousRow) {
   return targetSheetRow;
 }
 
-async function pasteFullRow(page, options, cursor, row, cells) {
-  console.log(`Paste full row at sheet row ${row}`);
-  await moveToCell(page, options, cursor, row, 1);
-  await writeClipboard(page, cells.map((cell) => String(cell ?? '')).join('\t'));
-  await page.keyboard.press('Control+V');
-  await page.waitForTimeout(Number(options.waitAfterPasteSeconds || 4) * 1000);
-}
-
 async function waitForInsertedRow(page, options, sourceRow, timeoutMs = 15000) {
   const started = Date.now();
   let parsed = null;
@@ -1174,7 +1166,7 @@ async function pasteValueAtCurrentRow(page, options, cursor, column, value) {
 }
 
 async function updateMappedFields(page, options, parsed, cursor, row, sourceRow) {
-  const actions = buildMappedFieldActions(parsed, sourceRow);
+  const actions = resolveRowScopedActions(buildMappedFieldActions(parsed, sourceRow), row);
   await page.keyboard.press('Escape');
   await page.waitForTimeout(120);
   for (const action of actions) {
@@ -1188,17 +1180,20 @@ function buildMappedFieldActions(parsed, sourceRow) {
     if (COPIED_TEMPLATE_FIELDS.has(field)) continue;
     const column = parsed.headerFields.get(field);
     if (!column) continue;
-    const value = field === 'date' ? formatDateForSheet(sourceRow.date) : sourceRow[field] || '';
+    const value = formatInsertedFieldValue(field, sourceRow[field], sourceRow.date);
     actions.push({ column, value });
   }
   for (const column of parsed.zeroColumns || []) {
     actions.push({ column, value: '0' });
   }
   for (const column of parsed.balanceOrderColumns || []) {
-    actions.push({ column, value: sourceRow.balanceOrders || '0' });
+    actions.push({ column, value: formatNumber(sourceRow.balanceOrders || '0') });
   }
   for (const column of parsed.balanceAmountColumns || []) {
-    actions.push({ column, value: sourceRow.balanceAmount || '0' });
+    actions.push({ column, value: formatNumber(sourceRow.balanceAmount || '0') });
+  }
+  for (const action of buildFormulaFieldActions(parsed, '__ROW__')) {
+    actions.push(action);
   }
   for (const column of parsed.clearColumns || []) {
     actions.push({ column, value: null });
@@ -1259,6 +1254,13 @@ function buildFormulaFieldActions(parsed, row) {
   return cells.sort((a, b) => a.column - b.column);
 }
 
+function resolveRowScopedActions(actions, row) {
+  return actions.map((action) => ({
+    column: action.column,
+    value: typeof action.value === 'string' ? action.value.replace(/__ROW__/g, String(row)) : action.value,
+  }));
+}
+
 function buildFormulaCellValue(parsed, row, kind) {
   const bookCostColumn = parsed.headerFields.get('cost');
   const rebateColumn = (parsed.rebateColumns || [])[0];
@@ -1283,7 +1285,7 @@ function buildFormulaCellValue(parsed, row, kind) {
 
 async function updateMappedFieldsAtCurrentRow(page, options, parsed, sourceRow) {
   const cursor = { column: null };
-  const actions = buildMappedFieldActions(parsed, sourceRow);
+  const actions = resolveRowScopedActions(buildMappedFieldActions(parsed, sourceRow), '__ROW__');
   await page.keyboard.press('Escape');
   await page.waitForTimeout(120);
   for (const action of actions) {
@@ -1374,7 +1376,7 @@ async function syncSheet(page, sync, sheetName, rows, dryRun) {
 
     console.log(`${sheetName}: insert ${sourceRow.account} ${sourceRow.date} using template row ${templateRow.sheetRow} (${templateRow.standard.account} ${templateRow.standard.date})`);
     const targetRow = await duplicateRowBelow(page, sync, cursor, templateRow);
-    await pasteFullRow(page, sync, cursor, targetRow, buildInsertedCells(parsed, templateRow, sourceRow, targetRow));
+    await updateMappedFields(page, sync, parsed, cursor, targetRow, sourceRow);
     const verifiedInsert = await waitForInsertedRow(page, sync, sourceRow, Number(sync.insertVerifyTimeoutMs || 15000));
     if (!verifiedInsert.row) {
       console.log(`${sheetName}: verify account rows ${sourceRow.account}: ${describeAccountRows(verifiedInsert.parsed || parsed, sourceRow.account)}`);
