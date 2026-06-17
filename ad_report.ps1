@@ -4,7 +4,8 @@ param(
     [string]$StartDate = '',
     [string]$EndDate = '',
     [int]$Days = 0,
-    [string]$AccountUsername = ''
+    [string]$AccountUsername = '',
+    [string]$OutputCsv = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -263,6 +264,22 @@ function Merge-ConversionsIntoRows {
     $Rows
 }
 
+function New-ZeroRow {
+    param($Provider, [string]$ReportDate)
+
+    [pscustomobject]@{
+        date = $ReportDate
+        platform = '360'
+        account = [string]$Provider.username
+        device = 'all'
+        impressions = '0'
+        clicks = '0'
+        cost = '0'
+        conversions = '0'
+        note = 'accountDaily; empty result fallback'
+    }
+}
+
 function Get-QihooRows {
     param($Provider, [string]$ReportDate)
 
@@ -294,6 +311,9 @@ function Get-QihooRows {
             if ($effective.includeOcpcConversions) {
                 $conversions = Get-QihooConversionRows -Provider $effective -ReportDate $ReportDate -AccessToken $token
                 $rows = @(Merge-ConversionsIntoRows -Rows $rows -Conversions $conversions)
+            }
+            if ($rows.Count -eq 0) {
+                $rows = @(New-ZeroRow -Provider $effective -ReportDate $ReportDate)
             }
             Write-Log ('Qihoo360 rows for account ' + $effective.username + ': ' + $rows.Count)
             $allRows += $rows
@@ -358,12 +378,15 @@ foreach ($reportDate in $reportDates) {
     }
 }
 
-$outputCsv = $config.outputCsv
-if ($config.PSObject.Properties.Name -contains 'outputCsvs' -and
-    $config.outputCsvs.PSObject.Properties.Name -contains 'qihoo360' -and
-    -not [string]::IsNullOrWhiteSpace([string]$config.outputCsvs.qihoo360)) {
-    $outputCsv = [string]$config.outputCsvs.qihoo360
+$resolvedOutputCsv = $OutputCsv
+if ([string]::IsNullOrWhiteSpace($resolvedOutputCsv)) {
+    $resolvedOutputCsv = $config.outputCsv
+    if ($config.PSObject.Properties.Name -contains 'outputCsvs' -and
+        $config.outputCsvs.PSObject.Properties.Name -contains 'qihoo360' -and
+        -not [string]::IsNullOrWhiteSpace([string]$config.outputCsvs.qihoo360)) {
+        $resolvedOutputCsv = [string]$config.outputCsvs.qihoo360
+    }
 }
 
-Save-ReportRows -Rows $allRows -OutputCsv $outputCsv
+Save-ReportRows -Rows $allRows -OutputCsv $resolvedOutputCsv
 Write-Log 'Done.'

@@ -2,6 +2,7 @@ param(
     [string]$ConfigPath = (Join-Path $PSScriptRoot 'config.json'),
     [string]$Date = '',
     [string]$AccountUsername = '',
+    [string]$SourceCsvPaths = '',
     [string]$StartDate = '',
     [string]$EndDate = '',
     [int]$Days = 0,
@@ -54,6 +55,7 @@ if ($DryRun) { $args += '--dry-run' }
 if ($ScanMissing) { $args += '--scan-missing' }
 if (-not [string]::IsNullOrWhiteSpace($Date)) { $args += ('--date=' + $Date) }
 if (-not [string]::IsNullOrWhiteSpace($AccountUsername)) { $args += ('--account=' + $AccountUsername) }
+if (-not [string]::IsNullOrWhiteSpace($SourceCsvPaths)) { $args += ('--source-csvs=' + $SourceCsvPaths) }
 if (-not [string]::IsNullOrWhiteSpace($StartDate)) { $args += ('--start-date=' + $StartDate) }
 if (-not [string]::IsNullOrWhiteSpace($EndDate)) { $args += ('--end-date=' + $EndDate) }
 if ($Days -gt 0) { $args += ('--days=' + $Days) }

@@ -295,6 +295,10 @@ function normalizeAccount(value) {
   return normalize(value).replace(/\s+/g, ' ');
 }
 
+function normalizeAccountLoose(value) {
+  return normalizeAccount(value).replace(/[^0-9a-z\u4e00-\u9fa5]/gi, '').toLowerCase();
+}
+
 function normalizeHeader(value) {
   return normalize(value).replace(/\s+/g, '').toLowerCase();
 }
@@ -582,8 +586,10 @@ function buildColumnsByHeaders(headers, wantedHeaders) {
 function rebuildIndexes(parsed) {
   parsed.byAccountDate = new Map();
   parsed.byAccount = new Map();
+  parsed.byAccountLoose = new Map();
   for (const row of parsed.rows) {
     const account = normalizeAccount(row.standard.account);
+    const accountLoose = normalizeAccountLoose(row.standard.account);
     const key = rowKey(row.standard);
     if (key.replace('|', '') && !parsed.byAccountDate.has(key)) {
       parsed.byAccountDate.set(key, row);
@@ -592,7 +598,29 @@ function rebuildIndexes(parsed) {
       if (!parsed.byAccount.has(account)) parsed.byAccount.set(account, []);
       parsed.byAccount.get(account).push(row);
     }
+    if (accountLoose) {
+      if (!parsed.byAccountLoose.has(accountLoose)) parsed.byAccountLoose.set(accountLoose, []);
+      parsed.byAccountLoose.get(accountLoose).push(row);
+    }
   }
+}
+
+function getAccountRows(parsed, account) {
+  const exact = parsed.byAccount.get(normalizeAccount(account)) || [];
+  if (exact.length > 0) return exact;
+
+  const loose = normalizeAccountLoose(account);
+  const looseRows = (parsed.byAccountLoose && parsed.byAccountLoose.get(loose)) || [];
+  if (looseRows.length > 0) return looseRows;
+
+  if (!loose || !parsed.byAccount) return [];
+  for (const [name, rows] of parsed.byAccount.entries()) {
+    const candidateLoose = normalizeAccountLoose(name);
+    if (candidateLoose && (candidateLoose.includes(loose) || loose.includes(candidateLoose))) {
+      return rows;
+    }
+  }
+  return [];
 }
 
 function assertRequiredHeaders(parsed, sheetName) {
@@ -614,7 +642,7 @@ function dateTime(value) {
 }
 
 function findClosestAccountDate(parsed, sourceRow) {
-  const accountRows = parsed.byAccount.get(normalizeAccount(sourceRow.account)) || [];
+  const accountRows = getAccountRows(parsed, sourceRow.account);
   const targetTime = dateTime(sourceRow.date);
   if (targetTime === null) return null;
 
@@ -636,7 +664,7 @@ function findClosestAccountDate(parsed, sourceRow) {
 }
 
 function findInsertTemplateRow(parsed, sourceRow) {
-  const accountRows = parsed.byAccount.get(normalizeAccount(sourceRow.account)) || [];
+  const accountRows = getAccountRows(parsed, sourceRow.account);
   const targetTime = dateTime(sourceRow.date);
   if (targetTime === null) return null;
 
@@ -658,7 +686,7 @@ function findInsertTemplateRow(parsed, sourceRow) {
 }
 
 function describeAccountRows(parsed, account, limit = 12) {
-  const rows = parsed.byAccount.get(normalizeAccount(account)) || [];
+  const rows = getAccountRows(parsed, account);
   return rows
     .slice(-limit)
     .map((row) => `row ${row.sheetRow}: ${row.standard.account} ${row.standard.date}`)
@@ -851,7 +879,7 @@ function buildSheetAccounts(config) {
 }
 
 function existingDatesForAccount(parsed, account) {
-  const rows = parsed.byAccount.get(normalizeAccount(account)) || [];
+  const rows = getAccountRows(parsed, account);
   return new Set(rows.map((row) => normalizeDate(row.standard.date)).filter(Boolean));
 }
 
@@ -890,7 +918,7 @@ async function scanMissingDates(page, sync, targetDates) {
 
     for (const account of accounts) {
       const normalizedAccount = normalizeAccount(account);
-      const accountRows = parsed.byAccount.get(normalizedAccount) || [];
+      const accountRows = getAccountRows(parsed, normalizedAccount);
       if (accountRows.length === 0) {
         plan.items.push({
           sheetName,
@@ -1533,15 +1561,22 @@ async function main() {
   const scanMissing = process.argv.includes('--scan-missing');
   const targetDate = normalizeDate(getArg('date', ''));
   const targetAccount = normalizeAccount(getArg('account', ''));
+  const sourceCsvArgs = String(getArg('source-csvs', ''))
+    .split('|')
+    .map((item) => item.trim())
+    .filter(Boolean);
   const baseDir = path.dirname(configPath);
   const allRows = [];
   let sheetRows = new Map();
   if (!scanMissing) {
     const balance = loadBalanceReconcile(sync, baseDir);
-    for (const source of sync.sources || []) {
-      const csvPath = path.isAbsolute(source.csvPath)
-        ? source.csvPath
-        : path.resolve(baseDir, source.csvPath);
+    const sourcePaths = sourceCsvArgs.length > 0
+      ? sourceCsvArgs
+      : (sync.sources || []).map((source) => source.csvPath);
+    for (const sourcePath of sourcePaths) {
+      const csvPath = path.isAbsolute(sourcePath)
+        ? sourcePath
+        : path.resolve(baseDir, sourcePath);
       const rows = filterRowsByDate(readCsvObjects(csvPath), targetDate)
         .filter((row) => !targetAccount || normalizeAccount(row.account) === targetAccount);
       allRows.push(...rows);

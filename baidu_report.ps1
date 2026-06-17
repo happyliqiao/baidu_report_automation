@@ -4,7 +4,8 @@ param(
     [string]$StartDate = '',
     [string]$EndDate = '',
     [int]$Days = 0,
-    [string]$AccountUsername = ''
+    [string]$AccountUsername = '',
+    [string]$OutputCsv = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -660,13 +661,16 @@ foreach ($reportDate in $reportDates) {
 }
 
 Write-Log ('Baidu total rows: ' + $rows.Count)
-$outputCsv = $config.outputCsv
-if ($config.PSObject.Properties.Name -contains 'outputCsvs' -and
-    $config.outputCsvs.PSObject.Properties.Name -contains 'baidu' -and
-    -not [string]::IsNullOrWhiteSpace([string]$config.outputCsvs.baidu)) {
-    $outputCsv = [string]$config.outputCsvs.baidu
+$resolvedOutputCsv = $OutputCsv
+if ([string]::IsNullOrWhiteSpace($resolvedOutputCsv)) {
+    $resolvedOutputCsv = $config.outputCsv
+    if ($config.PSObject.Properties.Name -contains 'outputCsvs' -and
+        $config.outputCsvs.PSObject.Properties.Name -contains 'baidu' -and
+        -not [string]::IsNullOrWhiteSpace([string]$config.outputCsvs.baidu)) {
+        $resolvedOutputCsv = [string]$config.outputCsvs.baidu
+    }
 }
-Save-ReportRows -Rows $rows -OutputCsv $outputCsv
+Save-ReportRows -Rows $rows -OutputCsv $resolvedOutputCsv
 if ($failedAccounts.Count -gt 0) {
     throw ('Baidu report had account failures: ' + ($failedAccounts -join ' | '))
 }

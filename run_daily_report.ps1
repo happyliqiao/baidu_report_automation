@@ -181,7 +181,8 @@ function Invoke-ReportScriptForDate {
         [string]$WorkDir,
         [string]$ReportDate,
         [string]$ConfigPath,
-        [string]$AccountUsername = ''
+        [string]$AccountUsername = '',
+        [string]$OutputCsv = ''
     )
 
     if (-not (Test-Path $ScriptPath)) {
@@ -197,6 +198,9 @@ function Invoke-ReportScriptForDate {
     )
     if (-not [string]::IsNullOrWhiteSpace($AccountUsername)) {
         $args += @('-AccountUsername', $AccountUsername)
+    }
+    if ($PSBoundParameters.ContainsKey('OutputCsv') -and -not [string]::IsNullOrWhiteSpace([string]$OutputCsv)) {
+        $args += @('-OutputCsv', $OutputCsv)
     }
 
     Push-Location $WorkDir
@@ -283,7 +287,8 @@ function Invoke-ShimoSyncForDate {
         [string]$ScriptPath,
         [string]$ConfigPath,
         [string]$ReportDate,
-        [string]$AccountUsername = ''
+        [string]$AccountUsername = '',
+        [string]$SourceCsvPaths = ''
     )
 
     $args = @(
@@ -295,6 +300,9 @@ function Invoke-ShimoSyncForDate {
     )
     if (-not [string]::IsNullOrWhiteSpace($AccountUsername)) {
         $args += @('-AccountUsername', $AccountUsername)
+    }
+    if ($PSBoundParameters.ContainsKey('SourceCsvPaths') -and -not [string]::IsNullOrWhiteSpace([string]$SourceCsvPaths)) {
+        $args += @('-SourceCsvPaths', $SourceCsvPaths)
     }
     Write-Host ('=== Sync Shimo account sheets for ' + $ReportDate + ' ===')
     powershell.exe @args
@@ -470,19 +478,18 @@ if ($UseShimoMissingDates) {
     $qihooRuns = @($runKeys.Values | Where-Object { $_.Source -eq '360' })
     $allRuns = @($runKeys.Values)
 
-    $baiduBounds = Get-DateBounds -Runs $baiduRuns
-    if ($baiduBounds) {
-        Invoke-ReportScriptForDateRange -Name 'Baidu' -ScriptPath $baiduRunScript -WorkDir $baiduDir -StartDate $baiduBounds.StartDate -EndDate $baiduBounds.EndDate -ConfigPath $shimoConfigPath
-    }
-
-    $qihooBounds = Get-DateBounds -Runs $qihooRuns
-    if ($qihooBounds) {
-        Invoke-ReportScriptForDateRange -Name '360' -ScriptPath $qihooRunScript -WorkDir $qihooDir -StartDate $qihooBounds.StartDate -EndDate $qihooBounds.EndDate -ConfigPath $shimoConfigPath
-    }
-
-    $syncBounds = Get-DateBounds -Runs $allRuns
-    if ($syncBounds) {
-        Invoke-ShimoSyncForDateRange -ScriptPath $shimoSyncScript -ConfigPath $shimoConfigPath -StartDate $syncBounds.StartDate -EndDate $syncBounds.EndDate
+    $tempDir = Join-Path $baiduDir 'data\tmp_missing_sync'
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    $orderedRuns = @($allRuns | Sort-Object Source, Account, Date)
+    foreach ($run in $orderedRuns) {
+        $safeAccount = ([string]$run.Account) -replace '[^\p{L}\p{Nd}._-]', '_'
+        $tempCsv = Join-Path $tempDir ($run.Source + '_' + $safeAccount + '_' + $run.Date + '.csv')
+        if ($run.Source -eq 'baidu') {
+            Invoke-ReportScriptForDate -Name 'Baidu' -ScriptPath $baiduRunScript -WorkDir $baiduDir -ReportDate $run.Date -ConfigPath $shimoConfigPath -AccountUsername $run.Account -OutputCsv $tempCsv
+        } else {
+            Invoke-ReportScriptForDate -Name '360' -ScriptPath $qihooRunScript -WorkDir $qihooDir -ReportDate $run.Date -ConfigPath $shimoConfigPath -AccountUsername $run.Account -OutputCsv $tempCsv
+        }
+        Invoke-ShimoSyncForDate -ScriptPath $shimoSyncScript -ConfigPath $shimoConfigPath -ReportDate $run.Date -AccountUsername $run.Account -SourceCsvPaths $tempCsv
     }
 } else {
     $enabledBaiduAccounts = @(Get-EnabledBaiduAccounts -Config $rootConfig)
