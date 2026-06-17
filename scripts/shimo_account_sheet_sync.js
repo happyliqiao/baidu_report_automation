@@ -23,6 +23,10 @@ const REBATE_HEADERS = ['\u8fd4\u70b9'];
 const FINANCE_COST_HEADERS = ['\u8d22\u52a1\u6d88\u8017'];
 const PROFIT_HEADERS = ['\u5229\u6da6'];
 const ROI_HEADERS = ['ROI'];
+const CTR_HEADERS = ['ctr', 'CTR'];
+const CPC_HEADERS = ['cpc', 'CPC'];
+const BOOK_COST_HEADERS = ['\u8d26\u9762\u6210\u672c'];
+const UNIT_PRICE_HEADERS = ['\u5ba2\u5355\u4ef7'];
 const DEFAULT_BALANCE_RECONCILE_FILE = path.join(
   os.homedir(),
   'Desktop',
@@ -545,6 +549,10 @@ function parseSheetText(text) {
     financeCostColumns: buildColumnsByHeaders(headers, FINANCE_COST_HEADERS),
     profitColumns: buildColumnsByHeaders(headers, PROFIT_HEADERS),
     roiColumns: buildColumnsByHeaders(headers, ROI_HEADERS),
+    ctrColumns: buildColumnsByHeaders(headers, CTR_HEADERS),
+    cpcColumns: buildColumnsByHeaders(headers, CPC_HEADERS),
+    bookCostColumns: buildColumnsByHeaders(headers, BOOK_COST_HEADERS),
+    unitPriceColumns: buildColumnsByHeaders(headers, UNIT_PRICE_HEADERS),
     clearColumns: buildColumnsByHeaders(headers, CLEAR_AFTER_COPY_HEADERS),
     rows,
     rawLineCount: lines.length,
@@ -699,6 +707,10 @@ function buildInsertedCells(parsed, previousRow, sourceRow, sheetRow) {
   applyFinanceCostFormulas(parsed, clonedCells, sheetRow);
   applyProfitFormulas(parsed, clonedCells, sheetRow);
   applyRoiFormulas(parsed, clonedCells, sheetRow);
+  applyCtrFormulas(parsed, clonedCells, sheetRow);
+  applyCpcFormulas(parsed, clonedCells, sheetRow);
+  applyBookCostFormulas(parsed, clonedCells, sheetRow);
+  applyUnitPriceFormulas(parsed, clonedCells, sheetRow);
   return clonedCells;
 }
 
@@ -743,6 +755,54 @@ function applyRoiFormulas(parsed, cells, sheetRow) {
   const outputRef = columnName(outputColumn);
   for (const column of parsed.roiColumns || []) {
     cells[column - 1] = `=IFERROR(${profitRef}${sheetRow}/${outputRef}${sheetRow},0)`;
+  }
+}
+
+function applyCtrFormulas(parsed, cells, sheetRow) {
+  const impressionsColumn = parsed.headerFields.get('impressions');
+  const clicksColumn = parsed.headerFields.get('clicks');
+  if (!impressionsColumn || !clicksColumn || !sheetRow) return;
+
+  const impressionsRef = columnName(impressionsColumn);
+  const clicksRef = columnName(clicksColumn);
+  for (const column of parsed.ctrColumns || []) {
+    cells[column - 1] = `=IFERROR(${clicksRef}${sheetRow}/${impressionsRef}${sheetRow},0)`;
+  }
+}
+
+function applyCpcFormulas(parsed, cells, sheetRow) {
+  const costColumn = parsed.headerFields.get('cost');
+  const clicksColumn = parsed.headerFields.get('clicks');
+  if (!costColumn || !clicksColumn || !sheetRow) return;
+
+  const costRef = columnName(costColumn);
+  const clicksRef = columnName(clicksColumn);
+  for (const column of parsed.cpcColumns || []) {
+    cells[column - 1] = `=IFERROR(${costRef}${sheetRow}/${clicksRef}${sheetRow},0)`;
+  }
+}
+
+function applyBookCostFormulas(parsed, cells, sheetRow) {
+  const costColumn = parsed.headerFields.get('cost');
+  const conversionsColumn = parsed.headerFields.get('conversions');
+  if (!costColumn || !conversionsColumn || !sheetRow) return;
+
+  const costRef = columnName(costColumn);
+  const conversionsRef = columnName(conversionsColumn);
+  for (const column of parsed.bookCostColumns || []) {
+    cells[column - 1] = `=IFERROR(${costRef}${sheetRow}/${conversionsRef}${sheetRow},0)`;
+  }
+}
+
+function applyUnitPriceFormulas(parsed, cells, sheetRow) {
+  const balanceAmountColumn = (parsed.balanceAmountColumns || [])[0];
+  const orderColumn = (parsed.balanceOrderColumns || [])[0];
+  if (!balanceAmountColumn || !orderColumn || !sheetRow) return;
+
+  const balanceAmountRef = columnName(balanceAmountColumn);
+  const orderRef = columnName(orderColumn);
+  for (const column of parsed.unitPriceColumns || []) {
+    cells[column - 1] = `=IFERROR(${balanceAmountRef}${sheetRow}/${orderRef}${sheetRow},0)`;
   }
 }
 
@@ -1251,6 +1311,26 @@ function buildFormulaFieldActions(parsed, row) {
     if (roiFormula) cells.push({ column, value: roiFormula });
   }
 
+  const ctrFormula = buildFormulaCellValue(parsed, row, 'ctr');
+  for (const column of parsed.ctrColumns || []) {
+    if (ctrFormula) cells.push({ column, value: ctrFormula });
+  }
+
+  const cpcFormula = buildFormulaCellValue(parsed, row, 'cpc');
+  for (const column of parsed.cpcColumns || []) {
+    if (cpcFormula) cells.push({ column, value: cpcFormula });
+  }
+
+  const bookCostFormula = buildFormulaCellValue(parsed, row, 'bookCost');
+  for (const column of parsed.bookCostColumns || []) {
+    if (bookCostFormula) cells.push({ column, value: bookCostFormula });
+  }
+
+  const unitPriceFormula = buildFormulaCellValue(parsed, row, 'unitPrice');
+  for (const column of parsed.unitPriceColumns || []) {
+    if (unitPriceFormula) cells.push({ column, value: unitPriceFormula });
+  }
+
   return cells.sort((a, b) => a.column - b.column);
 }
 
@@ -1279,6 +1359,30 @@ function buildFormulaCellValue(parsed, row, kind) {
   if (kind === 'roi') {
     if (!profitColumn || !outputColumn) return '';
     return `=IFERROR(${columnName(profitColumn)}${row}/${columnName(outputColumn)}${row},0)`;
+  }
+  if (kind === 'ctr') {
+    const impressionsColumn = parsed.headerFields.get('impressions');
+    const clicksColumn = parsed.headerFields.get('clicks');
+    if (!impressionsColumn || !clicksColumn) return '';
+    return `=IFERROR(${columnName(clicksColumn)}${row}/${columnName(impressionsColumn)}${row},0)`;
+  }
+  if (kind === 'cpc') {
+    const costColumn = parsed.headerFields.get('cost');
+    const clicksColumn = parsed.headerFields.get('clicks');
+    if (!costColumn || !clicksColumn) return '';
+    return `=IFERROR(${columnName(costColumn)}${row}/${columnName(clicksColumn)}${row},0)`;
+  }
+  if (kind === 'bookCost') {
+    const costColumn = parsed.headerFields.get('cost');
+    const conversionsColumn = parsed.headerFields.get('conversions');
+    if (!costColumn || !conversionsColumn) return '';
+    return `=IFERROR(${columnName(costColumn)}${row}/${columnName(conversionsColumn)}${row},0)`;
+  }
+  if (kind === 'unitPrice') {
+    const balanceAmountColumn = (parsed.balanceAmountColumns || [])[0];
+    const orderColumn = (parsed.balanceOrderColumns || [])[0];
+    if (!balanceAmountColumn || !orderColumn) return '';
+    return `=IFERROR(${columnName(balanceAmountColumn)}${row}/${columnName(orderColumn)}${row},0)`;
   }
   return '';
 }
