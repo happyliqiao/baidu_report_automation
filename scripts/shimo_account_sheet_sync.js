@@ -22,6 +22,7 @@ const BALANCE_AMOUNT_HEADERS = ['\u4ea7\u51fa\u91d1\u989d'];
 const REBATE_HEADERS = ['\u8fd4\u70b9'];
 const FINANCE_COST_HEADERS = ['\u8d22\u52a1\u6d88\u8017'];
 const PROFIT_HEADERS = ['\u5229\u6da6'];
+const ROI_HEADERS = ['ROI'];
 const DEFAULT_BALANCE_RECONCILE_FILE = path.join(
   os.homedir(),
   'Desktop',
@@ -197,7 +198,7 @@ function parseNumber(value) {
 function formatNumber(value) {
   const number = Number(value || 0);
   if (!Number.isFinite(number)) return '0';
-  return number.toFixed(2).replace(/\.?0+$/, '');
+  return String(Math.trunc(number));
 }
 
 function findBalanceHeaderRow(rows) {
@@ -543,6 +544,7 @@ function parseSheetText(text) {
     rebateColumns: buildColumnsByHeaders(headers, REBATE_HEADERS),
     financeCostColumns: buildColumnsByHeaders(headers, FINANCE_COST_HEADERS),
     profitColumns: buildColumnsByHeaders(headers, PROFIT_HEADERS),
+    roiColumns: buildColumnsByHeaders(headers, ROI_HEADERS),
     clearColumns: buildColumnsByHeaders(headers, CLEAR_AFTER_COPY_HEADERS),
     rows,
     rawLineCount: lines.length,
@@ -680,7 +682,7 @@ function buildInsertedCells(parsed, previousRow, sourceRow, sheetRow) {
   for (const field of REQUIRED_FIELDS) {
     const column = parsed.headerFields.get(field);
     if (!column) continue;
-    clonedCells[column - 1] = field === 'date' ? formatDateForSheet(sourceRow.date) : sourceRow[field] || '';
+    clonedCells[column - 1] = formatInsertedFieldValue(field, sourceRow[field], sourceRow.date);
   }
   for (const column of parsed.zeroColumns || []) {
     clonedCells[column - 1] = '0';
@@ -696,7 +698,16 @@ function buildInsertedCells(parsed, previousRow, sourceRow, sheetRow) {
   }
   applyFinanceCostFormulas(parsed, clonedCells, sheetRow);
   applyProfitFormulas(parsed, clonedCells, sheetRow);
+  applyRoiFormulas(parsed, clonedCells, sheetRow);
   return clonedCells;
+}
+
+function formatInsertedFieldValue(field, value, dateValue) {
+  if (field === 'date') return formatDateForSheet(dateValue);
+  if (['impressions', 'clicks', 'cost', 'conversions'].includes(field)) {
+    return formatNumber(value);
+  }
+  return value || '';
 }
 
 function applyFinanceCostFormulas(parsed, cells, sheetRow) {
@@ -720,6 +731,18 @@ function applyProfitFormulas(parsed, cells, sheetRow) {
   const financeCostRef = columnName(financeCostColumn);
   for (const column of parsed.profitColumns || []) {
     cells[column - 1] = `=${outputRef}${sheetRow}-${financeCostRef}${sheetRow}`;
+  }
+}
+
+function applyRoiFormulas(parsed, cells, sheetRow) {
+  const profitColumn = (parsed.profitColumns || [])[0];
+  const outputColumn = (parsed.balanceAmountColumns || [])[0];
+  if (!profitColumn || !outputColumn || !sheetRow) return;
+
+  const profitRef = columnName(profitColumn);
+  const outputRef = columnName(outputColumn);
+  for (const column of parsed.roiColumns || []) {
+    cells[column - 1] = `=${profitRef}${sheetRow}/${outputRef}${sheetRow}`;
   }
 }
 
