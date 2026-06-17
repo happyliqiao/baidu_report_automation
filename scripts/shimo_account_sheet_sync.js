@@ -1483,6 +1483,13 @@ async function syncSheet(page, sync, sheetName, rows, dryRun) {
     await updateMappedFields(page, sync, parsed, cursor, targetRow, sourceRow);
     const verifiedInsert = await waitForInsertedRow(page, sync, sourceRow, Number(sync.insertVerifyTimeoutMs || 15000));
     if (!verifiedInsert.row) {
+      const copiedText = await (async () => {
+        await selectWholeRow(page, sync, cursor, targetRow);
+        return await copySelectedRowText(page, sync);
+      })().catch(() => '');
+      if (copiedText) {
+        console.log(`${sheetName}: inserted row preview ${targetRow}: ${previewCopiedRow(copiedText)}`);
+      }
       console.log(`${sheetName}: verify account rows ${sourceRow.account}: ${describeAccountRows(verifiedInsert.parsed || parsed, sourceRow.account)}`);
       throw new Error(`${sheetName}: inserted row not found after update: ${sourceRow.account} ${sourceRow.date}`);
     }
