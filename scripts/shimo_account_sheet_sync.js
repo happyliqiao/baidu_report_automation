@@ -1258,13 +1258,15 @@ async function pasteValueAtCell(page, options, cursor, row, column, value) {
     await typeCellValue(page, value);
   }
   await page.waitForTimeout(Number(options.waitAfterCellPasteMs || 250));
+  cursor.row = null;
+  cursor.column = null;
 }
 
 async function typeCellValue(page, value) {
   const text = String(value ?? '');
   await page.keyboard.press('Delete');
   if (text) {
-    await page.keyboard.type(text, { delay: 5 });
+    await page.keyboard.insertText(text);
   }
   await page.keyboard.press('Enter');
 }
@@ -1286,6 +1288,16 @@ async function pasteValueAtCurrentRow(page, options, cursor, column, value) {
   await moveToColumnOnCurrentRow(page, cursor, column);
   await typeCellValue(page, value);
   await page.waitForTimeout(Number(options.waitAfterCellPasteMs || 250));
+  cursor.column = null;
+}
+
+async function pasteWholeRowAtRow(page, options, cursor, row, cells) {
+  await selectWholeRow(page, options, cursor, row);
+  await writeClipboard(page, cells.map((cell) => String(cell ?? '')).join('\t'));
+  await page.keyboard.press('Control+V');
+  await page.waitForTimeout(Number(options.waitAfterPasteSeconds || 4) * 1000);
+  cursor.row = null;
+  cursor.column = null;
 }
 
 async function updateMappedFields(page, options, parsed, cursor, row, sourceRow) {
@@ -1543,7 +1555,8 @@ async function syncSheet(page, sync, sheetName, rows, dryRun) {
 
     console.log(`${sheetName}: insert ${sourceRow.account} ${sourceRow.date} using template row ${templateRow.sheetRow} (${templateRow.standard.account} ${templateRow.standard.date})`);
     const targetRow = await duplicateRowBelow(page, sync, cursor, templateRow);
-    await updateMappedFields(page, sync, parsed, cursor, targetRow, sourceRow);
+    const memoryInserted = rememberInsertedRow(parsed, templateRow, sourceRow);
+    await pasteWholeRowAtRow(page, sync, cursor, targetRow, memoryInserted.cells);
     const verifiedInsert = await waitForInsertedRow(page, sync, sourceRow, Number(sync.insertVerifyTimeoutMs || 15000));
     if (!verifiedInsert.row) {
       const copiedText = await (async () => {
