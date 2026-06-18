@@ -32,6 +32,7 @@ const DEFAULT_BALANCE_RECONCILE_FILE = path.join(
   'Desktop',
   '\u4e00\u952e\u51fa\u7a3f\u8bb0\u5f55\u5bfc\u51fa\u5217\u8868.xlsx'
 );
+let currentSyncConfig = {};
 
 const BALANCE_FIELD_HEADERS = {
   date: ['\u521b\u5efa\u65f6\u95f4', '\u6d88\u8017\u65f6\u95f4', '\u652f\u4ed8\u65f6\u95f4', '\u65f6\u95f4', '\u65e5\u671f', 'date'],
@@ -623,6 +624,18 @@ function getAccountRows(parsed, account) {
   return [];
 }
 
+function getTemplateAccount(config, account) {
+  const templates = config.templateAccounts || {};
+  const exact = templates[account];
+  if (exact) return exact;
+
+  const normalizedAccount = normalizeAccount(account);
+  for (const [key, value] of Object.entries(templates)) {
+    if (normalizeAccount(key) === normalizedAccount) return value;
+  }
+  return '';
+}
+
 function describeKnownAccounts(parsed, limit = 20) {
   if (!parsed.byAccount || parsed.byAccount.size === 0) return 'none';
   return [...parsed.byAccount.keys()]
@@ -649,8 +662,12 @@ function dateTime(value) {
   return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
 }
 
-function findClosestAccountDate(parsed, sourceRow) {
-  const accountRows = getAccountRows(parsed, sourceRow.account);
+function findClosestAccountDate(parsed, sourceRow, config = {}) {
+  let accountRows = getAccountRows(parsed, sourceRow.account);
+  if (accountRows.length === 0) {
+    const templateAccount = getTemplateAccount(config, sourceRow.account);
+    if (templateAccount) accountRows = getAccountRows(parsed, templateAccount);
+  }
   const targetTime = dateTime(sourceRow.date);
   if (targetTime === null) return null;
 
@@ -671,8 +688,12 @@ function findClosestAccountDate(parsed, sourceRow) {
   return best ? best.row : null;
 }
 
-function findInsertTemplateRow(parsed, sourceRow) {
-  const accountRows = getAccountRows(parsed, sourceRow.account);
+function findInsertTemplateRow(parsed, sourceRow, config = {}) {
+  let accountRows = getAccountRows(parsed, sourceRow.account);
+  if (accountRows.length === 0) {
+    const templateAccount = getTemplateAccount(config, sourceRow.account);
+    if (templateAccount) accountRows = getAccountRows(parsed, templateAccount);
+  }
   const targetTime = dateTime(sourceRow.date);
   if (targetTime === null) return null;
 
@@ -953,7 +974,9 @@ async function scanMissingDates(page, sync, targetDates) {
     for (const account of accounts) {
       const normalizedAccount = normalizeAccount(account);
       const accountRows = getAccountRows(parsed, normalizedAccount);
-      if (accountRows.length === 0) {
+      const templateAccount = getTemplateAccount(sync, normalizedAccount);
+      const templateRows = templateAccount ? getAccountRows(parsed, templateAccount) : [];
+      if (accountRows.length === 0 && templateRows.length === 0) {
         plan.items.push({
           sheetName,
           account: normalizedAccount,
@@ -983,7 +1006,8 @@ async function scanMissingDates(page, sync, targetDates) {
       });
 
       if (missingDates.length > 0) {
-        console.log(`${sheetName}: missing ${normalizedAccount}: ${missingDates.join(', ')}`);
+        const suffix = accountRows.length === 0 && templateAccount ? ` (template ${templateAccount})` : '';
+        console.log(`${sheetName}: missing ${normalizedAccount}${suffix}: ${missingDates.join(', ')}`);
       } else {
         const dateScope = accountTargetDates.length > 0 ? accountTargetDates.join(', ') : 'no target dates';
         console.log(`${sheetName}: complete ${normalizedAccount} for ${dateScope}`);
@@ -1485,9 +1509,9 @@ function summarizePlan(sheetName, parsed, rows) {
     if (findExisting(parsed, row)) {
       exists += 1;
       console.log(`${sheetName}: dry-run exists ${row.account} ${row.date}`);
-    } else if (findInsertTemplateRow(parsed, row)) {
+    } else if (findInsertTemplateRow(parsed, row, currentSyncConfig)) {
       missingWithTemplate += 1;
-      const template = findInsertTemplateRow(parsed, row);
+      const template = findInsertTemplateRow(parsed, row, currentSyncConfig);
       console.log(`${sheetName}: dry-run insertable ${row.account} ${row.date} after row ${template.sheetRow} (${template.standard.date})`);
     } else {
       missingNoTemplate += 1;
@@ -1500,7 +1524,7 @@ function summarizePlan(sheetName, parsed, rows) {
 function planInsertRows(parsed, rows) {
   return rows.map((sourceRow, index) => {
     const existing = findExisting(parsed, sourceRow);
-    const templateRow = existing ? null : findInsertTemplateRow(parsed, sourceRow);
+    const templateRow = existing ? null : findInsertTemplateRow(parsed, sourceRow, currentSyncConfig);
     return { sourceRow, existing, templateRow, index };
   }).sort((a, b) => {
     const rowA = a.templateRow ? a.templateRow.sheetRow : -1;
@@ -1513,6 +1537,7 @@ function planInsertRows(parsed, rows) {
 }
 
 async function syncSheet(page, sync, sheetName, rows, dryRun) {
+  currentSyncConfig = sync;
   await clickSheet(page, sheetName);
   let parsed = await reparseCurrentSheet(page, sync);
   if (parsed.headers.length === 0) {
