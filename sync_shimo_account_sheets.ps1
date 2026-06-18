@@ -32,7 +32,11 @@ function Write-Log {
     }
     if (-not $written) {
         $fallbackPath = Join-Path $logDir ('shimo_account_sheet_sync_' + $PID + '.log')
-        Add-Content -Path $fallbackPath -Value $line -Encoding UTF8
+        try {
+            Add-Content -Path $fallbackPath -Value $line -Encoding UTF8
+        } catch {
+            Write-Warning ('Failed to write Shimo sync log: ' + $_.Exception.Message)
+        }
     }
     Write-Host $line
 }

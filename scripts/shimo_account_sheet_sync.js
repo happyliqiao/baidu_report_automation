@@ -651,6 +651,19 @@ function assertRequiredHeaders(parsed, sheetName) {
   }
 }
 
+function hasRequiredHeaders(parsed) {
+  return REQUIRED_FIELDS.every((field) => parsed.headerFields.has(field));
+}
+
+function previewCopiedSheetText(text) {
+  return String(text || '')
+    .split(/\r?\n/)
+    .slice(0, 5)
+    .map((line) => line.split('\t').slice(0, 12).join('\t'))
+    .join(' | ')
+    .slice(0, 800);
+}
+
 function findExisting(parsed, sourceRow) {
   return parsed.byAccountDate.get(rowKey(sourceRow)) || null;
 }
@@ -1496,9 +1509,27 @@ async function updateMappedFieldsAtCurrentRow(page, options, parsed, sourceRow) 
   }
 }
 
-async function reparseCurrentSheet(page, options) {
-  const text = await copySheetText(page, options);
-  return parseSheetText(text);
+async function reparseCurrentSheet(page, options, label = 'sheet') {
+  const attempts = Math.max(1, Number(options.copyParseRetryCount || 3));
+  let lastParsed = null;
+  let lastText = '';
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const text = await copySheetText(page, options);
+    const parsed = parseSheetText(text);
+    if (hasRequiredHeaders(parsed)) return parsed;
+    lastParsed = parsed;
+    lastText = text;
+    if (attempt < attempts) {
+      console.log(`${label}: copied sheet missing headers, retry ${attempt}/${attempts}`);
+      await page.keyboard.press('Escape').catch(() => {});
+      await page.waitForTimeout(300);
+      await focusGrid(page, options);
+      await page.keyboard.press('Control+Home').catch(() => {});
+      await page.waitForTimeout(500);
+    }
+  }
+  console.log(`${label}: copied sheet preview: ${previewCopiedSheetText(lastText) || '(empty)'}`);
+  return lastParsed || parseSheetText('');
 }
 
 function summarizePlan(sheetName, parsed, rows) {
@@ -1539,7 +1570,7 @@ function planInsertRows(parsed, rows) {
 async function syncSheet(page, sync, sheetName, rows, dryRun) {
   currentSyncConfig = sync;
   await clickSheet(page, sheetName);
-  let parsed = await reparseCurrentSheet(page, sync);
+  let parsed = await reparseCurrentSheet(page, sync, sheetName);
   if (parsed.headers.length === 0) {
     parsed = parseSheetText(defaultHeaders().join('\t'));
   }
@@ -1604,7 +1635,7 @@ async function syncSheet(page, sync, sheetName, rows, dryRun) {
   }
 
   if (insertedRows.length > 0) {
-    const verified = await reparseCurrentSheet(page, sync);
+    const verified = await reparseCurrentSheet(page, sync, sheetName);
     const missing = insertedRows.filter((row) => !findExisting(verified, row));
     if (missing.length > 0) {
       for (const row of missing) {
