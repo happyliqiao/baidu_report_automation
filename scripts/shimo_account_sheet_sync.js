@@ -761,8 +761,8 @@ function describeAccountRows(parsed, account, limit = 12) {
     .join('; ');
 }
 
-function rememberInsertedRow(parsed, previousRow, sourceRow) {
-  const insertAtSheetRow = previousRow.sheetRow + 1;
+function rememberInsertedRow(parsed, previousRow, sourceRow, actualSheetRow = null) {
+  const insertAtSheetRow = actualSheetRow || previousRow.sheetRow + 1;
   const clonedCells = buildInsertedCells(parsed, previousRow, sourceRow, insertAtSheetRow);
   const inserted = {
     cells: clonedCells,
@@ -951,6 +951,19 @@ function existingDatesForAccount(parsed, account) {
   return new Set(rows.map((row) => normalizeDate(row.standard.date)).filter(Boolean));
 }
 
+function duplicateDatesForAccount(parsed, account, targetDates = []) {
+  const wanted = new Set(targetDates.map((date) => normalizeDate(date)).filter(Boolean));
+  const counts = new Map();
+  for (const row of getAccountRows(parsed, account)) {
+    const date = normalizeDate(row.standard.date);
+    if (!date || (wanted.size > 0 && !wanted.has(date))) continue;
+    counts.set(date, (counts.get(date) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([date, count]) => ({ date, count }));
+}
+
 function latestDate(dates) {
   return [...dates].sort().slice(-1)[0] || '';
 }
@@ -1007,6 +1020,7 @@ async function scanMissingDates(page, sync, targetDates) {
       const existing = existingDatesForAccount(parsed, normalizedAccount);
       const accountTargetDates = targetDates.length > 0 ? targetDates : buildDefaultMissingTargetDates(existing);
       const missingDates = accountTargetDates.filter((date) => !existing.has(normalizeDate(date)));
+      const duplicateDates = duplicateDatesForAccount(parsed, normalizedAccount, accountTargetDates);
       plan.items.push({
         sheetName,
         account: normalizedAccount,
@@ -1015,12 +1029,15 @@ async function scanMissingDates(page, sync, targetDates) {
         targetDates: accountTargetDates,
         latestDate: latestDate(existing),
         missingDates,
+        duplicateDates,
         reason: missingDates.length > 0 ? 'missing' : 'complete',
       });
 
       if (missingDates.length > 0) {
         const suffix = accountRows.length === 0 && templateAccount ? ` (template ${templateAccount})` : '';
         console.log(`${sheetName}: missing ${normalizedAccount}${suffix}: ${missingDates.join(', ')}`);
+      } else if (duplicateDates.length > 0) {
+        console.log(`${sheetName}: complete ${normalizedAccount}, duplicates: ${duplicateDates.map((item) => `${item.date} x${item.count}`).join(', ')}`);
       } else {
         const dateScope = accountTargetDates.length > 0 ? accountTargetDates.join(', ') : 'no target dates';
         console.log(`${sheetName}: complete ${normalizedAccount} for ${dateScope}`);
@@ -1225,6 +1242,15 @@ function copiedRowLooksLikeTemplate(text, previousRow) {
   return hasAccount && hasDate;
 }
 
+function copiedRowLooksLikeSource(text, sourceRow) {
+  const cells = String(text || '').split(/\t|\r?\n/).map((cell) => normalize(cell));
+  const account = normalizeAccount(sourceRow.account);
+  const date = normalizeDate(sourceRow.date);
+  const hasAccount = cells.some((cell) => normalizeAccount(cell) === account);
+  const hasDate = cells.some((cell) => normalizeDate(cell) === date);
+  return hasAccount && hasDate;
+}
+
 function previewCopiedRow(text) {
   return String(text || '')
     .replace(/\r?\n/g, ' | ')
@@ -1273,6 +1299,30 @@ async function duplicateRowBelow(page, options, cursor, previousRow) {
   cursor.row = null;
   cursor.column = null;
   return targetSheetRow;
+}
+
+async function locateActualSheetRow(page, options, cursor, parsedRow, sourceRow) {
+  const parsedSheetRow = parsedRow.sheetRow;
+  const candidateRows = [parsedSheetRow];
+  for (let offset = 1; offset <= Number(options.existingRowSearchWindow || options.templateRowSearchWindow || 80); offset++) {
+    candidateRows.push(parsedSheetRow + offset);
+    if (parsedSheetRow - offset > 1) candidateRows.push(parsedSheetRow - offset);
+  }
+
+  const previews = [];
+  for (const candidateRow of candidateRows) {
+    await selectWholeRow(page, options, cursor, candidateRow);
+    const copiedText = await copySelectedRowText(page, options);
+    if (copiedRowLooksLikeSource(copiedText, sourceRow)) {
+      if (candidateRow !== parsedSheetRow) {
+        console.log(`Adjusted existing row from parsed row ${parsedSheetRow} to sheet row ${candidateRow}`);
+      }
+      return candidateRow;
+    }
+    previews.push(`row ${candidateRow}: ${previewCopiedRow(copiedText)}`);
+  }
+
+  throw new Error(`Existing row does not match parsed row ${parsedSheetRow}: ${sourceRow.account} ${sourceRow.date}; ${previews.slice(0, 6).join(' || ')}`);
 }
 
 async function waitForInsertedRow(page, options, sourceRow, timeoutMs = 15000) {
@@ -1592,7 +1642,8 @@ async function syncSheet(page, sync, sheetName, rows, dryRun) {
     const sourceRow = plan.sourceRow;
     if (plan.existing) {
       skipped += 1;
-      if (await updateBalanceFields(page, sync, parsed, cursor, plan.existing.sheetRow, sourceRow)) {
+      const actualRow = await locateActualSheetRow(page, sync, cursor, plan.existing, sourceRow);
+      if (await updateBalanceFields(page, sync, parsed, cursor, actualRow, sourceRow)) {
         updated += 1;
         console.log(`${sheetName}: update balance ${sourceRow.account} ${sourceRow.date} orders=${sourceRow.balanceOrders || '0'} amount=${sourceRow.balanceAmount || '0'}`);
       } else {
@@ -1611,7 +1662,7 @@ async function syncSheet(page, sync, sheetName, rows, dryRun) {
 
     console.log(`${sheetName}: insert ${sourceRow.account} ${sourceRow.date} using template row ${templateRow.sheetRow} (${templateRow.standard.account} ${templateRow.standard.date})`);
     const targetRow = await duplicateRowBelow(page, sync, cursor, templateRow);
-    const memoryInserted = rememberInsertedRow(parsed, templateRow, sourceRow);
+    const memoryInserted = rememberInsertedRow(parsed, templateRow, sourceRow, targetRow);
     await pasteWholeRowAtRow(page, sync, cursor, targetRow, memoryInserted.cells);
     const verifiedInsert = await waitForInsertedRow(page, sync, sourceRow, Number(sync.insertVerifyTimeoutMs || 15000));
     if (!verifiedInsert.row) {
