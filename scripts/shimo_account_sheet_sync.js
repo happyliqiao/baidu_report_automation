@@ -437,6 +437,20 @@ function todayLocalDate() {
   return `${year}-${month}-${day}`;
 }
 
+function getBrowserCandidates(sync) {
+  const candidates = [];
+  const configured = String(sync.chromePath || '').trim();
+  if (configured) candidates.push(configured);
+  candidates.push(
+    'C:\\Users\\liqiao\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+  );
+  return [...new Set(candidates)];
+}
+
 function buildDateRange(startDate, endDate) {
   const start = normalizeDate(startDate);
   const end = normalizeDate(endDate);
@@ -990,6 +1004,7 @@ async function scanMissingDates(page, sync, targetDates) {
     items: [],
   };
 
+  let screenshotSaved = false;
   for (const [sheetName, accounts] of sheetAccounts.entries()) {
     await clickSheet(page, sheetName);
     const parsed = await reparseCurrentSheet(page, sync);
@@ -1224,6 +1239,126 @@ async function selectWholeRow(page, options, cursor, row) {
   await moveToCell(page, options, cursor, row, 1);
   await page.keyboard.press('Shift+Space');
   await page.waitForTimeout(250);
+}
+
+async function applyNewRowFormats(page, options, parsed, cursor, sheetRow) {
+  // 先选中整行
+  await selectWholeRow(page, options, cursor, sheetRow);
+  await page.waitForTimeout(200);
+
+  // 设置水平居中
+  try {
+    // 点击水平对齐下拉菜单
+    const alignMenu = page.locator('[data-smattr="smAlignMenu"]').first();
+    if (await alignMenu.count() > 0) {
+      await alignMenu.click({ timeout: 2000 });
+      await page.waitForTimeout(300);
+      // 在下拉菜单中选择居中对齐
+      const centerOption = page.locator('.menu li:has(.icon--align_center), .menu .dropMenuItem:has(.icon--align_center)').first();
+      if (await centerOption.count() > 0) {
+        await centerOption.click({ timeout: 2000 });
+      } else {
+        // 如果找不到选项，可能已经是居中了，按 Escape 关闭菜单
+        await page.keyboard.press('Escape');
+      }
+    }
+    await page.waitForTimeout(200);
+  } catch (error) {
+    console.log(`Warning: Failed to set center align: ${error.message}`);
+  }
+
+  // 重新选中整行（因为点击菜单可能会取消选中状态）
+  await selectWholeRow(page, options, cursor, sheetRow);
+  await page.waitForTimeout(200);
+
+  // 设置字体为宋体
+  try {
+    // 点击字体下拉菜单
+    const fontMenu = page.locator('.toolBar--fontFamilyWrap .dropMenuHead').first();
+    if (await fontMenu.count() > 0) {
+      await fontMenu.click({ timeout: 2000 });
+      await page.waitForTimeout(300);
+      // 在下拉菜单中选择宋体
+      const songOption = page.locator('.menu li:has-text("宋体"), .menu .dropMenuItem:has-text("宋体")').first();
+      if (await songOption.count() > 0) {
+        await songOption.click({ timeout: 2000 });
+      } else {
+        // 如果找不到选项，按 Escape 关闭菜单
+        await page.keyboard.press('Escape');
+      }
+    }
+    await page.waitForTimeout(200);
+  } catch (error) {
+    console.log(`Warning: Failed to set font: ${error.message}`);
+  }
+
+  // 设置字号为9号
+  try {
+    const fontSizeInput = page.locator('.toolBar--fontSizeInput').first();
+    if (await fontSizeInput.count() > 0) {
+      await fontSizeInput.click({ timeout: 2000 });
+      await page.keyboard.press('Control+A');
+      await page.keyboard.type('9');
+      await page.keyboard.press('Enter');
+    }
+    await page.waitForTimeout(200);
+  } catch (error) {
+    console.log(`Warning: Failed to set font size: ${error.message}`);
+  }
+
+  // 设置 CTR 列为百分比格式
+  for (const column of parsed.ctrColumns || []) {
+    await moveToCell(page, options, cursor, sheetRow, column);
+    // 点击百分比格式按钮
+    try {
+      const percentBtn = page.locator('.toolBar--iconBtn:has(.icon--percent)').first();
+      if (await percentBtn.count() > 0) {
+        await percentBtn.click({ timeout: 2000 });
+      } else {
+        //  fallback 到快捷键
+        await page.keyboard.press('Control+Shift+%');
+      }
+    } catch (e) {
+      await page.keyboard.press('Control+Shift+%');
+    }
+    await page.waitForTimeout(200);
+  }
+
+  // 设置 ROI 列为百分比格式
+  for (const column of parsed.roiColumns || []) {
+    await moveToCell(page, options, cursor, sheetRow, column);
+    try {
+      const percentBtn = page.locator('.toolBar--iconBtn:has(.icon--percent)').first();
+      if (await percentBtn.count() > 0) {
+        await percentBtn.click({ timeout: 2000 });
+      } else {
+        await page.keyboard.press('Control+Shift+%');
+      }
+    } catch (e) {
+      await page.keyboard.press('Control+Shift+%');
+    }
+    await page.waitForTimeout(200);
+  }
+
+  // 设置 CPC 列为数值格式（保留2位小数）
+  for (const column of parsed.cpcColumns || []) {
+    await moveToCell(page, options, cursor, sheetRow, column);
+    // 尝试使用增加小数位数按钮，或者 fallback 到快捷键
+    try {
+      // 先点击增加小数位数按钮两次，确保有2位小数
+      const incPrecisionBtn = page.locator('.toolBar--iconBtn:has(.icon--inc_precision)').first();
+      if (await incPrecisionBtn.count() > 0) {
+        await incPrecisionBtn.click({ timeout: 2000 });
+        await page.waitForTimeout(100);
+        await incPrecisionBtn.click({ timeout: 2000 });
+      } else {
+        await page.keyboard.press('Control+Shift+!');
+      }
+    } catch (e) {
+      await page.keyboard.press('Control+Shift+!');
+    }
+    await page.waitForTimeout(200);
+  }
 }
 
 async function copySelectedRowText(page, options) {
@@ -1677,6 +1812,8 @@ async function syncSheet(page, sync, sheetName, rows, dryRun) {
       throw new Error(`${sheetName}: inserted row not found after update: ${sourceRow.account} ${sourceRow.date}`);
     }
     parsed = verifiedInsert.parsed;
+    // 为新插入的行设置单元格格式
+    await applyNewRowFormats(page, sync, parsed, cursor, targetRow);
     insertedRows.push(sourceRow);
     inserted += 1;
   }
@@ -1745,17 +1882,35 @@ async function main() {
     console.log(`Target account: ${targetAccount}`);
   }
 
-  const chromePath = sync.chromePath || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
   const userDataDir = sync.userDataDir || path.join(baseDir, 'data', 'chrome-shimo-profile');
   fs.mkdirSync(userDataDir, { recursive: true });
 
-  const context = await chromium.launchPersistentContext(userDataDir, {
-    executablePath: chromePath,
-    headless: false,
-    viewport: null,
-    args: ['--start-maximized'],
-    permissions: ['clipboard-read', 'clipboard-write'],
-  });
+  const browserCandidates = getBrowserCandidates(sync).filter((candidate) => fs.existsSync(candidate));
+  if (browserCandidates.length === 0) {
+    throw new Error(`No supported browser executable found. Checked: ${getBrowserCandidates(sync).join('; ')}`);
+  }
+
+  let context = null;
+  let lastLaunchError = null;
+  for (const browserPath of browserCandidates) {
+    try {
+      context = await chromium.launchPersistentContext(userDataDir, {
+        executablePath: browserPath,
+        headless: false,
+        viewport: null,
+        args: ['--start-maximized'],
+        permissions: ['clipboard-read', 'clipboard-write'],
+      });
+      console.log(`Using browser executable: ${browserPath}`);
+      break;
+    } catch (error) {
+      lastLaunchError = error;
+      console.warn(`Failed to launch browser at ${browserPath}: ${error.message}`);
+    }
+  }
+  if (!context) {
+    throw new Error(`Failed to launch any supported browser. Last error: ${lastLaunchError ? lastLaunchError.message : 'unknown'}`);
+  }
   await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
     origin: new URL(sync.documentUrl).origin,
   });

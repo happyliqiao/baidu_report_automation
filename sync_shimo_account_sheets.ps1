@@ -17,27 +17,23 @@ $ErrorActionPreference = 'Stop'
 function Write-Log {
     param([string]$Message)
 
-    $logDir = Join-Path $PSScriptRoot 'logs'
-    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
     $line = '{0} {1}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), $Message
-    $logPath = Join-Path $logDir 'shimo_account_sheet_sync.log'
-    $written = $false
-    for ($attempt = 1; $attempt -le 5 -and -not $written; $attempt++) {
+    $logRoots = @(
+        (Join-Path $PSScriptRoot 'logs'),
+        (Join-Path $env:TEMP 'baidu_report_automation\logs')
+    )
+    foreach ($logDir in $logRoots) {
         try {
-            Add-Content -Path $logPath -Value $line -Encoding UTF8
-            $written = $true
+            New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+            Add-Content -Path (Join-Path $logDir 'shimo_account_sheet_sync.log') -Value $line -Encoding UTF8
+            Write-Host $line
+            return
         } catch {
-            Start-Sleep -Milliseconds (200 * $attempt)
+            continue
         }
     }
-    if (-not $written) {
-        $fallbackPath = Join-Path $logDir ('shimo_account_sheet_sync_' + $PID + '.log')
-        try {
-            Add-Content -Path $fallbackPath -Value $line -Encoding UTF8
-        } catch {
-            Write-Warning ('Failed to write Shimo sync log: ' + $_.Exception.Message)
-        }
-    }
+
+    Write-Warning ('Failed to write Shimo sync log to project and temp directories: ' + $line)
     Write-Host $line
 }
 

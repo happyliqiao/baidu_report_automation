@@ -3,16 +3,44 @@ param(
     [string]$StartDate = '',
     [string]$EndDate = '',
     [int]$Days = 0,
-    [switch]$UseShimoMissingDates,
+    [object]$UseShimoMissingDates = $true,
     [switch]$SkipShimoSync
 )
 
 $ErrorActionPreference = 'Stop'
 
 $useShimoMissingDatesExplicit = $PSBoundParameters.ContainsKey('UseShimoMissingDates')
-if (-not $useShimoMissingDatesExplicit) {
-    $UseShimoMissingDates = $true
+
+function ConvertTo-BooleanValue {
+    param([object]$Value, [bool]$DefaultValue = $false)
+
+    if ($null -eq $Value) {
+        return $DefaultValue
+    }
+
+    if ($Value -is [bool]) {
+        return [bool]$Value
+    }
+
+    if ($Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal]) {
+        return [int]$Value -ne 0
+    }
+
+    $text = ([string]$Value).Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return $DefaultValue
+    }
+    if (@('true', '1', 'yes', 'y', 'on') -contains $text.ToLowerInvariant()) {
+        return $true
+    }
+    if (@('false', '0', 'no', 'n', 'off') -contains $text.ToLowerInvariant()) {
+        return $false
+    }
+
+    return $DefaultValue
 }
+
+$UseShimoMissingDates = ConvertTo-BooleanValue -Value $UseShimoMissingDates -DefaultValue $true
 
 function Set-DefaultDirectReportDate {
     if ([string]::IsNullOrWhiteSpace($script:Date) -and
