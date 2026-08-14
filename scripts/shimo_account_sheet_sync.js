@@ -826,7 +826,10 @@ function buildInsertedCells(parsed, previousRow, sourceRow, sheetRow) {
 
 function formatInsertedFieldValue(field, value, dateValue) {
   if (field === 'date') return formatDateForSheet(dateValue);
-  if (['impressions', 'clicks', 'cost', 'conversions'].includes(field)) {
+  if (field === 'cost') {
+    return String(parseNumber(value));
+  }
+  if (['impressions', 'clicks', 'conversions'].includes(field)) {
     return formatNumber(value);
   }
   return value || '';
@@ -888,7 +891,7 @@ function applyCpcFormulas(parsed, cells, sheetRow) {
   const costRef = columnName(costColumn);
   const clicksRef = columnName(clicksColumn);
   for (const column of parsed.cpcColumns || []) {
-    cells[column - 1] = `=IFERROR(${costRef}${sheetRow}/${clicksRef}${sheetRow},0)`;
+    cells[column - 1] = `=IFERROR(ROUND(${costRef}${sheetRow}/${clicksRef}${sheetRow},2),0)`;
   }
 }
 
@@ -1194,6 +1197,11 @@ async function copySheetText(page, options) {
   await focusGrid(page, options);
   await page.keyboard.press('Control+A');
   await page.waitForTimeout(250);
+  // Shimo's first Ctrl+A selects only the current table/data region. A second
+  // Ctrl+A expands the selection to the full used range, including account
+  // blocks separated by filters or blank rows.
+  await page.keyboard.press('Control+A');
+  await page.waitForTimeout(250);
   await page.keyboard.press('Control+C');
   await page.waitForTimeout(Number(options.waitAfterCopySeconds || 1) * 1000);
   return readClipboard(page);
@@ -1246,28 +1254,29 @@ async function applyNewRowFormats(page, options, parsed, cursor, sheetRow) {
   await selectWholeRow(page, options, cursor, sheetRow);
   await page.waitForTimeout(200);
 
-  // 设置水平居中
+  // Center the whole inserted row and verify the active toolbar state.
   try {
-    // 点击水平对齐下拉菜单
-    const alignMenu = page.locator('[data-smattr="smAlignMenu"]').first();
-    if (await alignMenu.count() > 0) {
-      await alignMenu.click({ timeout: 2000 });
-      await page.waitForTimeout(300);
-      // 在下拉菜单中选择居中对齐
-      const centerOption = page.locator('.menu li:has(.icon--align_center), .menu .dropMenuItem:has(.icon--align_center)').first();
-      if (await centerOption.count() > 0) {
-        await centerOption.click({ timeout: 2000 });
-      } else {
-        // 如果找不到选项，可能已经是居中了，按 Escape 关闭菜单
-        await page.keyboard.press('Escape');
-      }
+    const alignMenu = page.locator('[data-smattr="smAlignMenu"]:visible').first();
+    if (await alignMenu.count() === 0) {
+      throw new Error('Visible horizontal alignment menu not found');
     }
-    await page.waitForTimeout(200);
+    await alignMenu.click({ timeout: 3000 });
+    await page.waitForTimeout(300);
+    const centerOption = page.locator('.menu__open .menuItem:has(.icon--align_center):visible').first();
+    if (await centerOption.count() === 0) {
+      throw new Error('Visible center alignment option not found');
+    }
+    await centerOption.click({ timeout: 3000 });
+    await page.waitForTimeout(250);
+    await selectWholeRow(page, options, cursor, sheetRow);
+    const centeredIcon = page.locator('[data-smattr="smAlignMenu"]:visible .icon--align_center').first();
+    if (await centeredIcon.count() === 0) {
+      throw new Error('Horizontal center alignment verification failed');
+    }
   } catch (error) {
-    console.log(`Warning: Failed to set center align: ${error.message}`);
+    throw new Error(`Failed to set inserted row horizontal alignment: ${error.message}`);
   }
 
-  // 重新选中整行（因为点击菜单可能会取消选中状态）
   await selectWholeRow(page, options, cursor, sheetRow);
   await page.waitForTimeout(200);
 
@@ -1340,24 +1349,27 @@ async function applyNewRowFormats(page, options, parsed, cursor, sheetRow) {
     await page.waitForTimeout(200);
   }
 
-  // 设置 CPC 列为数值格式（保留2位小数）
+  // Use the fixed decimal-number format so CPC always displays two decimals.
   for (const column of parsed.cpcColumns || []) {
     await moveToCell(page, options, cursor, sheetRow, column);
-    // 尝试使用增加小数位数按钮，或者 fallback 到快捷键
-    try {
-      // 先点击增加小数位数按钮两次，确保有2位小数
-      const incPrecisionBtn = page.locator('.toolBar--iconBtn:has(.icon--inc_precision)').first();
-      if (await incPrecisionBtn.count() > 0) {
-        await incPrecisionBtn.click({ timeout: 2000 });
-        await page.waitForTimeout(100);
-        await incPrecisionBtn.click({ timeout: 2000 });
-      } else {
-        await page.keyboard.press('Control+Shift+!');
-      }
-    } catch (e) {
-      await page.keyboard.press('Control+Shift+!');
+    const formatterMenu = page.locator('.toolBar--formatter:visible').first();
+    if (await formatterMenu.count() === 0) {
+      throw new Error('Visible number format menu not found for CPC');
     }
-    await page.waitForTimeout(200);
+    await formatterMenu.click({ timeout: 3000 });
+    await page.waitForTimeout(250);
+    const twoDecimalFormatText = '\u6570\u5b57(\u5c0f\u6570\u70b9)';
+    const decimalNumberOption = page.locator('.menu__open .menuItem:visible').filter({ hasText: twoDecimalFormatText }).first();
+    if (await decimalNumberOption.count() === 0) {
+      throw new Error('Two-decimal number format option not found for CPC');
+    }
+    await decimalNumberOption.click({ timeout: 3000 });
+    await page.waitForTimeout(250);
+    const activeFormat = normalize(await formatterMenu.textContent());
+    const numericFormatLabel = '\u6570\u503c';
+    if (![twoDecimalFormatText, numericFormatLabel].includes(activeFormat)) {
+      throw new Error(`CPC number format verification failed: ${activeFormat}`);
+    }
   }
 }
 
@@ -1667,7 +1679,7 @@ function buildFormulaCellValue(parsed, row, kind) {
     const costColumn = parsed.headerFields.get('cost');
     const clicksColumn = parsed.headerFields.get('clicks');
     if (!costColumn || !clicksColumn) return '';
-    return `=IFERROR(${columnName(costColumn)}${row}/${columnName(clicksColumn)}${row},0)`;
+    return `=IFERROR(ROUND(${columnName(costColumn)}${row}/${columnName(clicksColumn)}${row},2),0)`;
   }
   if (kind === 'bookCost') {
     const costColumn = parsed.headerFields.get('cost');
@@ -1882,7 +1894,10 @@ async function main() {
     console.log(`Target account: ${targetAccount}`);
   }
 
-  const userDataDir = sync.userDataDir || path.join(baseDir, 'data', 'chrome-shimo-profile');
+  const configuredUserDataDir = sync.userDataDir || path.join('data', 'chrome-shimo-profile');
+  const userDataDir = path.isAbsolute(configuredUserDataDir)
+    ? configuredUserDataDir
+    : path.resolve(baseDir, configuredUserDataDir);
   fs.mkdirSync(userDataDir, { recursive: true });
 
   const browserCandidates = getBrowserCandidates(sync).filter((candidate) => fs.existsSync(candidate));

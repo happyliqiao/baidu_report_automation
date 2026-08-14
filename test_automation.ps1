@@ -96,6 +96,18 @@ if ($runDailyContent -notmatch 'No refreshable Baidu account found in config\.js
     throw 'run_daily_report.ps1 missing Baidu token refresh fallback.'
 }
 
+Write-Step 'Validate inserted-row display formatting rules.'
+$shimoSyncContent = Get-Content -LiteralPath (Join-Path $root 'scripts\shimo_account_sheet_sync.js') -Raw -Encoding UTF8
+if ($shimoSyncContent -notmatch 'ROUND\(.+?,2\)') {
+    throw 'Shimo sync missing two-decimal CPC rounding.'
+}
+if ($shimoSyncContent -notmatch 'twoDecimalFormatText') {
+    throw 'Shimo sync missing fixed two-decimal CPC number format.'
+}
+if ($shimoSyncContent -notmatch 'menu__open \.menuItem:has\(\.icon--align_center\)') {
+    throw 'Shimo sync missing visible horizontal-center menu selection.'
+}
+
 Write-Step 'Check Node script syntax.'
 Push-Location $root
 try {
